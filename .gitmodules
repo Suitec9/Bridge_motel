@@ -1,0 +1,9 @@
+[submodule "Bridge/lib/forge-std"]
+	path = Bridge/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "Bridge/lib/EncryptedERC"]
+	path = Bridge/lib/EncryptedERC
+	url = https://github.com/ava-labs/EncryptedERC
+[submodule "Bridge/lib/openzeppelin-contracts"]
+	path = Bridge/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
