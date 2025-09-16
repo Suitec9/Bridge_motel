@@ -32,7 +32,7 @@ contract PrimeContractFactory is Ownable {
     // bondType 1 = premium ($10), 2 = Elite ($50) 3 = legeng ($150)
     mapping(uint256 bondType => uint256 value) public bondPrices; 
     
-    address public immutable holdingWalletImplementation;
+    address public holdingWalletImplementation;
 
     address public bondNFTContract; // ERC-1155 for bonds
 
@@ -66,6 +66,8 @@ contract PrimeContractFactory is Ownable {
 
     event NameServiceRevenue(uint256 amount);
 
+    event ContractsInitialized(address holdingWallet, address bondNFT, address nameService);
+
     error WalletAlreadyExists();
     error WalletNotFound();
     error WalletExpired();
@@ -89,26 +91,46 @@ contract PrimeContractFactory is Ownable {
         _;
     }
 
-    constructor(address _holdingWalletImplementation) Ownable(msg.sender) {
-
-        holdingWalletImplementation = _holdingWalletImplementation;
+    constructor() Ownable(msg.sender) {
 		
         //Mock bond prices for testnet
         bondPrices[1] = 0.085 ether; // Premium: $1 -15% = 0.085 (mocked as AVAX) 60 bonds
         bondPrices[2] = 0.09 ether;  // PremiumII: $5,555 - 15% = 0,09 AVAX 310 bonds
         bondPrices[3] = 0.62 ether; // Elite: $28 - 15% = 0.62 AVAX 1580 bonds
-        bondPrices[4] = 2.488 ether; // Legendary: $112 - 15% = 2.488 AVAX 6500 bonds 
+        bondPrices[4] = 2.488 ether; // Legendary: $112 - 15% = 2.488 AVAX 6500 bonds
+
+        activeBonds[1] = true;
+        activeBonds[2] = true;
+        activeBonds[3] = true; 
+        activeBonds[4] = true;
     } 
+
+    /**
+    * @dev Initialize contract addresses after deployment
+    */
+    function initializeContracts(
+        address _holdingWalletImpl,
+        address _bondNFT,
+        address _nameService
+    ) external onlyOwner {
+        require(_holdingWalletImpl != address(0), "Invalid holding wallet");
+        
+        holdingWalletImplementation = _holdingWalletImpl;
+        bondNFTContract = _bondNFT;
+        nameServiceContract = _nameService;
+
+        emit ContractsInitialized(_holdingWalletImpl, _bondNFT, _nameService);
+    }
 
     /**
      * @dev Creates a new holding wallet for the user (EOA only)
      */
-    function createHoldingWallet() external onlyEOA {
+    function createHoldingWallet() external onlyEOA returns (address){
 
         if (userHoldingWallet[msg.sender] != address(0)) revert WalletAlreadyExists();
 
         address wallet = holdingWalletImplementation.clone();
-        HoldingWallet(wallet).initialize(msg.sender);
+        HoldingWallet(wallet).initialize(msg.sender, address(this));
 
         userHoldingWallet[msg.sender] = wallet;
         holdingWalletUser[wallet] = msg.sender;
@@ -116,6 +138,8 @@ contract PrimeContractFactory is Ownable {
         walletCreationTime[wallet] = block.timestamp;
 
         emit WalletCreated(msg.sender, wallet, block.timestamp);
+
+        return wallet;
     }
     
     /**
@@ -175,25 +199,6 @@ contract PrimeContractFactory is Ownable {
         bondNFTContract = _bondNFT;
         nameServiceContract = _nameService;
         eERC20Contract = _eERC20;
-    }
-
-    /**
-     * @dev Deposit funds via eERC20
-     */
-    function depositERC20(
-        address token, 
-        uint256 amount) external walletExists(msg.sender) {
-
-        address wallet = userHoldingWallet[msg.sender];
-
-        require(token != address(0), "zero address");
-        if (amount == uint256(0)) revert InsufficientFunds();    
-
-        IERC20(token).approve(address(this), amount);
-        bool success = IERC20(token).transferFrom(wallet, address(this), amount);
-
-        require(success, "transfer failed");
-
     }
 
     /**
@@ -264,7 +269,6 @@ contract PrimeContractFactory is Ownable {
     /**
      * @dev Get wallet info for user
      */
-
     function getWalletInfo(address user) external view returns (
         address wallet,
         uint256 creationTime,

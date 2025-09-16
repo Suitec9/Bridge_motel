@@ -59,6 +59,7 @@ contract ABNameService is Ownable, ReentrancyGuard {
     }
 
     constructor(address _factoryContract) Ownable(msg.sender) {
+        require(_factoryContract != address(0), "zero address");
         factoryContract = _factoryContract;
 
         // Set initial pricing (in AVAX wei)

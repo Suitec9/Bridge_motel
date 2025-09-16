@@ -29,7 +29,7 @@ contract ABBondNFT is ERC1155, ERC1155Supply, Ownable, ReentrancyGuard {
     address public factoryContract;
     uint256 public nextBondType = 1;
 
-    event BondTypeCreated(uint256 indexed bondType, string name, uint256 value, uint256 dicount);
+    event BondTypeCreated(uint256 indexed bondType, string name, uint256 value, uint256 discount);
     event BondMinted(address indexed user, uint256 indexed bondType, uint256 quantity);
     event BondBurned(address indexed user, uint256 indexed bondType, uint256 quantity);
 
@@ -165,7 +165,5 @@ contract ABBondNFT is ERC1155, ERC1155Supply, Ownable, ReentrancyGuard {
 
         return bondType;
     }
-
-
 
 }

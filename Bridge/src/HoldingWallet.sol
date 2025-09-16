@@ -2,6 +2,7 @@
 pragma solidity ^0.8.27;
 
 
+import {IERC20} from "../lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 /**
  * @title HoldingWallet
  * @dev Individual user wallet with self-destruct capability
@@ -10,7 +11,7 @@ contract HoldingWallet {
 
     uint256 public creationTime;
 
-    address public immutable factory;
+    address public  factory;
 
     address public owner;
 
@@ -31,12 +32,12 @@ contract HoldingWallet {
         _;
     }
 
-    function initialize(address _owner) external onlyFactory {
+    function initialize(address _owner, address _factory) external {
         require(msg.sender != address(0), "zero address");
         require(!initialized, "Already Initialized");
         
         owner = _owner;
-        
+        factory = _factory;
         creationTime = block.timestamp;
         initialized = true;
     }    
@@ -79,16 +80,19 @@ contract HoldingWallet {
         
     }
 
-    /**
-     * @dev Self-destruct when expired OR user-initiated
-     */
-    function selfDestruct() external onlyOwner {
-        require(
-            block.timestamp >= creationTime + 90 days || msg.sender == owner,
-            "Cannot destruct yet"
-        );
+       function deposit(address token, uint256 amount) external onlyBeforeExpire returns (bool) {
+        require(token != address(0), 'zero address');
+        require(amount > uint256(1), 'insufficient amount');
 
-        // Return all remaining funds to owner
+        uint256 balance = uint256(address(this).balance);
+        balance += amount;
+
+        IERC20(token).approve(msg.sender, amount);
+        bool success =  IERC20(token).transferFrom(msg.sender, address(this), amount);
+
+        require(success, 'deposit failed');
+
+        return success;
         
     }
 
@@ -121,5 +125,6 @@ contract HoldingWallet {
         isExpired = block.timestamp >= expiryTime;
     }
 
+ 
     fallback() external {}
 }
