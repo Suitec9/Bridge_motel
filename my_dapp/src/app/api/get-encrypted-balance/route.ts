@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { useEERC } from "@avalabs/eerc-sdk";
-import { publicClient, walletClient, CONTRACTS, CIRCUIT_CONFIG } from "../ava-hook/route";
-import { error } from "console";
+import {  CONTRACTS, CIRCUIT_CONFIG } from "../ava-hook/route";
+import { useClients } from "@/hooks/config/clientHook";
 
 export async function POST(request: NextRequest) {
+
+    const { publicClient, walletClient } = await useClients();
     try {
         const { decryptionKey , tokenAddress } = await request.json();
 

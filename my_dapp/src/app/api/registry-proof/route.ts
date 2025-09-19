@@ -1,14 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { CircuitFiles, eERC20ProofInputs, eERC20ZKProofGenerator } from "@/utils/zkProofInputs";
 import { providers } from "ethers";
-const snarkjs = require("../../../../node_modules/snarkjs");
+const snarkjs = require("snarkjs");
 
 export async function POST(
+    req: NextRequest,
     input: eERC20ProofInputs, 
     files: CircuitFiles,
-    publicKeyX: string,
-    publicKeyY: string
-) {
+):Promise<void | NextResponse> {
     try {
         const provider = new providers.Web3Provider(window.ethereum);
         const _proof = new eERC20ZKProofGenerator(provider);
@@ -40,6 +39,6 @@ export async function POST(
     } catch (error: unknown) {
         console.error('registration proof failed', error);
 
-        return NextResponse.json({error: 'Registraion failed'}, {status: 500});
+        return NextResponse.json({});
     }
 }

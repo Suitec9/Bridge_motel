@@ -46,7 +46,7 @@ interface EnhancedWalletProps {
   onRegisterName?: () => void;
 }
  
-export const EnhancedWallet: React.FC<EnhancedWalletProps> = async ({
+export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     balance,
     userHoldingWallet,
     hasValidNames,
@@ -56,7 +56,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> = async ({
 
     const { isConnected } = useAccount();
     const { address } = useAccount();
-        const { checkAddressRegistered, encryptedBalance} =  useEERC20Integration()
+    const { checkAddressRegistered, encryptedBalance} =  useEERC20Integration()
     // eERC20 specific state
     const [isRegisteredForEERC20, setIsRegisteredForEERC20] = useState(false);
     const [encryptedTokenBalance, setEncryptedTokenBalance] = useState< string>('');
@@ -71,8 +71,6 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> = async ({
     const [transferForm, setTransferForm] = useState({ recipient: '', amount: ''});
     const [mintForm, setMintForm] = useState({ amount: ''});
     const [balanceProofForm, setBalanceProofForm] = useState({ minBalance: ''});
-
-
     
     const [activeTab, setActiveTab] = useState<'regular' | 'encrypted'>('regular');
     const [showKeyGeneration, setShowkeyGeneration] = useState(false);
@@ -102,6 +100,16 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> = async ({
         initializeEERC20System();
       }
     }, [isConnected, address, signer]);
+
+        // Check if user can access eERC20 features
+    const canAccessEncrypted = userHoldingWallet || hasValidNames;
+
+    // Check registration status on mount
+    useEffect(() => {
+        if (address && canAccessEncrypted) {
+            checkAddressRegistered(address);
+        }
+    }, [address, canAccessEncrypted, isRegisteredForEERC20]);
 
     const initializeEERC20System = async () => {
       if (!signer || !address) return;
@@ -208,7 +216,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> = async ({
     };
 
     const handleEncryptedTransfer = useCallback(async () => {
-      if (!contractInterface || !secretKey || !transferForm.recipient || transferForm.amount) {
+      if (!contractInterface || !secretKey || !transferForm.recipient || !transferForm.amount) {
         alert('Please fill all transfer details');
         return;
       }
@@ -288,7 +296,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> = async ({
     }, []);
 
     const handleMintTokens = useCallback(async () => {
-      if (!proofGenerator || !secretKey || !mintForm.amount || !address) {
+      if (!proofGenerator || !secretKey || !mintForm.amount || !address || !checkAddressRegistered) {
         alert('Please enter amount');
         return;
       }
@@ -324,15 +332,6 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> = async ({
         alert(`Minting failed: ${error.message}`)
       }
     }, []);
-    // Check if user can access eERC20 features
-    const canAccessEncrypted = userHoldingWallet || hasValidNames;
-
-    // Check registration status on mount
-    useEffect(() => {
-        if (address && canAccessEncrypted) {
-            checkAddressRegistered(address);
-        }
-    }, [address, canAccessEncrypted, isRegisteredForEERC20]);
 
   
 /**    const handleKeyGeneration = useCallback(async () => {
@@ -678,6 +677,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> = async ({
                     </button>
                     <button 
                     onClick={onRegisterName}
+                    role="presentation"
                     aria-placeholder='text...'
                     className="flex-1 bg-purple-600 hover:bg-purple-700 text-white 
                     py-2 px-4 rounded-lg transition-all duration-300 font-medium"

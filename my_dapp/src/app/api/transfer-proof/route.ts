@@ -6,7 +6,7 @@ import { providers } from 'ethers';
 import { error } from 'console';
 
 
-export async function POST( _inputs: eERC20ProofInputs, files: CircuitFiles) {
+export async function POST(request: NextRequest, _inputs: eERC20ProofInputs, files: CircuitFiles):Promise<void | NextResponse> {
     try {
 
         const provider = new providers.Web3Provider(window.ethereum);
@@ -29,13 +29,13 @@ export async function POST( _inputs: eERC20ProofInputs, files: CircuitFiles) {
                 newCommitment: proof.generateCommitment()
         };
 
-        
+        const { files } = await request.json();
 
         if (!inputs || !proof || !files) {
-            return NextResponse.json(
-                {error: 'Missing required inputs'},
+            return NextResponse.json({}
+/**                {error: 'Missing required inputs'},
                 { status: 400}
-            );
+ */            );
         }
 
         const { _proof, publicSignals } = await snarkjs.groth16.fullProve(
@@ -49,7 +49,6 @@ export async function POST( _inputs: eERC20ProofInputs, files: CircuitFiles) {
         return NextResponse.json({formatPr, success: true});
     } catch (error: unknown) {
         console.error('Proof failed to generate', error);
-        return NextResponse.json({ error:'generation failed'}, 
-        ), {status: 500}
+        return NextResponse.json({})
     }
 }

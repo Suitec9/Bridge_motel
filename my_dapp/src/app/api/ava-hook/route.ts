@@ -1,7 +1,8 @@
-import { publicClient, walletClient, CONTRACTS, CIRCUIT_CONFIG, UseEncryptedBalanceHookResult } from "@/hooks/config/configs";
+import {  CONTRACTS, CIRCUIT_CONFIG, UseEncryptedBalanceHookResult } from "@/hooks/config/configs";
 import { DecryptedTransaction, useEERC } from "@avalabs/eerc-sdk";
 import { NextResponse} from "next/server";
-
+import { useClients } from "@/hooks/config/clientHook";
+import { PublicClient, WalletClient } from "viem";
 export interface hookParams {
     isInitialized: boolean;
     isAllDataFetched: boolean;
@@ -38,19 +39,26 @@ export interface hookParams {
     setContractAuditorPublicKey: (address: `0x${string}`) => Promise<`0x${string}`>;
 }
 
+export interface clientProps {
+    publicClient: PublicClient,
+    walletClient: WalletClient
+}
+
 export async function POST(decryptionKey: string | null) {
+
+    
     try {
         
-        if (!publicClient || !walletClient || !CONTRACTS.EERC_STANDALONE || !decryptionKey) {
+        if ( !CONTRACTS.EERC_STANDALONE || !decryptionKey) {
             NextResponse.json( { error: 'Missing required parameters' }, 
                 { status: 400 })
         }
 
-           return NextResponse.json({success: true});
+           return NextResponse.json({ success: true});
     } catch (error: unknown) {
         console.error('Ava-eERC20 Integration initialization failed', error);
         return NextResponse.json({})
     }
 }
 
-export { CONTRACTS, publicClient, walletClient, CIRCUIT_CONFIG };
+export { CONTRACTS,  CIRCUIT_CONFIG };

@@ -470,7 +470,7 @@ const MotelSmartWallet = () => {
                 <Shield className="text-white" size={24} />
               </div>
               <div>
-                <h1 className="text-xl font-bold">Mote</h1>
+                <h1 className="text-xl font-bold">Motel</h1>
                 <p className="text-sm text-gray-400">Defi Bridge</p>
               </div>
             </div>

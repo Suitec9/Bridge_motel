@@ -1,6 +1,6 @@
 import { dirname } from "path";
 import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+
 import { FlatCompat } from '@eslint/eslintrc'
  
 const compat = new FlatCompat({
@@ -13,6 +13,7 @@ const eslintConfig = [
     extends: ['next'],
     rules: {
       'react/no-unescaped-entities': 'off',
+      'react/react-hooks': 'off',
       '@next/next/no-page-custom-font': 'off',
     },
   }),

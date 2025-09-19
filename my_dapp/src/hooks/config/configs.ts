@@ -1,3 +1,5 @@
+"use server";
+import { PublicClient, WalletClient } from "viem";
 import { avalancheFuji } from "viem/chains";
 import { usePublicClient, useWalletClient } from "wagmi";
 
@@ -88,14 +90,6 @@ export type hookProps = {
     refetchAuditor: () => void;
     setContractAuditorPublicKey: (address: `0x${string}`) => Promise<`0x${string}`>;
 }
-export const publicClient: any = usePublicClient({
-    chainId: avalancheFuji.id
-});
-
-export const walletClient: any  = useWalletClient({
-    account:  undefined
-});
-
 
 export const CONTRACTS = {
   EERC_STANDALONE: "0x5E9c6F952fB9615583182e70eDDC4e6E4E0aC0e0",
@@ -127,3 +121,4 @@ export const CIRCUIT_CONFIG = {
     zkey: "/BurnCircuit.groth16.zkey",
   },
 } as const;
+

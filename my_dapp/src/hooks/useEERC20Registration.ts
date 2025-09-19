@@ -1,11 +1,9 @@
 
 import { useState, useCallback, useEffect } from "react";
 
-import { DecryptedTransaction, useEERC } from "@avalabs/eerc-sdk";
-import { DEVELOPMENT_INFO, generateCompleteRegistrationProof, validateProof } from "@/utils/mockZKProofs";
-import { publicClient, walletClient } from "@/app/api/ava-hook/route";
-import { register } from "module";
-
+import { useClients } from "./config/clientHook";
+import { avalancheFuji } from "viem/chains";
+import { usePublicClient, useWalletClient } from "wagmi";
 
 interface EERC20HookReturn {
   // State
@@ -62,6 +60,14 @@ export  function useEERC20Integration(): EERC20HookReturn{
     areYouAuditor: false,
     hasBeenAuditor: null,
   });
+
+  const publicClient: any = usePublicClient({ 
+      chainId: avalancheFuji.id 
+  })
+    
+  const  walletClient: any = useWalletClient({
+      account: undefined
+  })
   
   const initialiseEERC = useCallback(async () => {
     if (!publicClient || !walletClient) {
@@ -250,7 +256,7 @@ export  function useEERC20Integration(): EERC20HookReturn{
       console.error('failed to gert encrypted balance', error);
       return false;
     }
-  }, [decryptionKey])
+  }, [])
 
   // Initailize when clients and key are ready
   useEffect(() => {
