@@ -12,7 +12,9 @@ import {
   Minus,
   AlertCircle,
   CheckCircle2,
-  Loader2
+  Loader2,
+  Copy,
+  ExternalLink
 } from 'lucide-react';
 import { useAccount, useBalance } from 'wagmi';
 import { useEERC20Integration } from '../hooks/useEERC20Registration';
@@ -56,7 +58,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
 
     const { isConnected } = useAccount();
     const { address } = useAccount();
-    const { checkAddressRegistered, encryptedBalance} =  useEERC20Integration()
+    const { checkAddressRegistered, encryptedBalance, handleRegister, initializeEERC} =  useEERC20Integration()
     // eERC20 specific state
     const [isRegisteredForEERC20, setIsRegisteredForEERC20] = useState(false);
     const [encryptedTokenBalance, setEncryptedTokenBalance] = useState< string>('');
@@ -97,12 +99,13 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
 
     useEffect(() => {
       if (isConnected && address && signer && !proofGenerator) {
-        initializeEERC20System();
+    //    initializeEERC20System();
+     loadUserEERC20State(address);
       }
     }, [isConnected, address, signer]);
 
         // Check if user can access eERC20 features
-    const canAccessEncrypted = userHoldingWallet || hasValidNames;
+    const canAccessEncrypted = hasValidNames;
 
     // Check registration status on mount
     useEffect(() => {
@@ -110,7 +113,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
             checkAddressRegistered(address);
         }
     }, [address, canAccessEncrypted, isRegisteredForEERC20]);
-
+/**
     const initializeEERC20System = async () => {
       if (!signer || !address) return;
 
@@ -156,9 +159,9 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       } finally {
         setIsInitializingEERC20(false);
       }
-    };
+    }; */
  
-    const loadUserEERC20State = async (userAddress: string, pg: eERC20ZKProofGenerator) => {
+    const loadUserEERC20State = async (userAddress: string) => {
       try {
         // Check registration status on-chain
         const isRegistered = await checkAddressRegistered(userAddress);
@@ -401,6 +404,38 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       navigator.clipboard.writeText(text);
     }
 
+    const renderHoldingWalletInfo = () => (
+      userHoldingWallet && (
+        <div className="bg-gradient-to-br from-green-900/20 to-emerald-900/20
+         rounded-xl p-6 border border-green-500/30">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-semibold text-green-400">
+              Holding Wallet Created
+            </h3>
+            <CheckCircle2 className="text-green-400" size={20} />
+          </div>
+          <div className="bg-gray-800 rounded-lg p-3 flex items-center justify-between">
+            <div className="flex-1 mr-3">
+              <p className="text-gray-400 text-sm">Address:</p>
+              <p className="text-white font-mono text-sm break-all">{userHoldingWallet}</p>
+            </div>
+            <div className="flex space-x-2">
+              <button 
+              onClick={() => copyToClipBoard(userHoldingWallet)}
+              className="p-2 bg-gray-700 hover:bg-gray-600 rounded
+              text-gray-300 hover:text-white transition-colors">
+                <Copy size={14} />
+              </button>
+              <button className="p-2 bg-gray-700 hover:bg-gray-600 rounded
+               text-gray-300 hover:text-white transition-colors">
+                <ExternalLink size={14} />
+               </button>
+            </div>
+          </div>
+         </div>
+      )
+    )
+
     const renderRegistrationPanel = () => (
       !isRegisteredForEERC20 && canAccessEncrypted && (
             <div className="bg-gradient-to-br from-purple-900/20 to-indigo-900/20 rounded-xl p-6 border border-purple-500/30">
@@ -433,7 +468,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
                 </p>
                 
                 <button
-                    onClick={handleEncryptedRegistration}
+                    onClick={handleRegister}
                     disabled={zkProofStatus !== 'idle'}
                     className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:bg-gray-600 text-white py-3 px-4 rounded-lg transition-all duration-300 font-medium flex items-center justify-center"
                 >
@@ -671,6 +706,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
                 <div className="flex gap-3">
                     <button 
                     onClick={onCreateWallet}
+                    
                     className="flex bg-blue-600 hover:bg-blue-700 text-white py-2
                     px-4 rounded-lg transtition-all duration-300 font-medium">
                         Create Holding Wallet
@@ -687,6 +723,8 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
                 </div>
             </div>
         )}
+
+        {renderHoldingWalletInfo()}
 
         {/** eERC Registration Panel */}
         {canAccessEncrypted && !isRegisteredForEERC20  && renderRegistrationPanel()}

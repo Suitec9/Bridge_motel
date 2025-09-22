@@ -264,8 +264,6 @@ export  function useEERC20Integration(): EERC20HookReturn{
       initialiseEERC();
     }
   }, [publicClient, walletClient, initialiseEERC]);
-
-
   
   return {
     // State

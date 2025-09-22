@@ -6,7 +6,9 @@ export async function POST() {
     try {
 
         console.log('🚀️ Initializing eERC20 integration for Motel Smart Wallet...');
-        
+        if (typeof window === undefined) {
+            return;
+        }
         // Get provided and signer from wagmi
         const provider = new ethers.providers.Web3Provider(window.ethereum);
         //const signer = provider.getSigner();

@@ -39,11 +39,6 @@ export interface hookParams {
     setContractAuditorPublicKey: (address: `0x${string}`) => Promise<`0x${string}`>;
 }
 
-export interface clientProps {
-    publicClient: PublicClient,
-    walletClient: WalletClient
-}
-
 export async function POST(decryptionKey: string | null) {
 
     

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { useEERC } from "@avalabs/eerc-sdk";
-import {  CONTRACTS, CIRCUIT_CONFIG } from "../ava-hook/route";
+import {  CONTRACTS, CIRCUIT_CONFIG} from "@/hooks/config/configs";
 import { useClients } from "@/hooks/config/clientHook";
 
 export async function POST(request: NextRequest) {
