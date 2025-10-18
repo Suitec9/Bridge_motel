@@ -57,8 +57,6 @@ const nextConfig: NextConfig = {
   },
   // Transpile packages that might have issues
   transpilePackages: ['@rainbow-me/rainbowkit', '@walletconnect/ethereum-provider'],
-
-
   
 };
 

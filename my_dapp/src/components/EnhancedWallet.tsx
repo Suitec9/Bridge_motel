@@ -1,4 +1,5 @@
-"use client"
+
+
 import React, { useState, useCallback, useEffect } from 'react';
 import { 
   ArrowDown, 
@@ -16,17 +17,20 @@ import {
   Copy,
   ExternalLink
 } from 'lucide-react';
-import { useAccount, useBalance } from 'wagmi';
-import { useEERC20Integration } from '../hooks/useEERC20Registration';
-import { avalanche, avalancheFuji, Chain } from 'wagmi/chains';
+import { useAccount, useBalance, usePublicClient, useReadContract, useWalletClient } from 'wagmi';
+import { arbitrumSepolia, avalanche, avalancheFuji, Chain, etherlink, hardhat, optimismSepolia, pgn, polygon, polygonAmoy, sepolia } from 'wagmi/chains';
 import { formatEther } from 'viem/utils';
-import { eERC20ContractInterface, eERC20ZKProofGenerator } from '@/utils/zkProofInputs';
-import {ethers, providers, Signer, utils} from "ethers"
+import { eERC20ContractInterface, eERC20ZKProofGenerator, EncryptedBalance, initializeContractInterface, initializeProofGenerator } from '@/utils/zkProofInputs';
+import {ethers, providers, Signer, utils, Wallet} from "ethers"
 import { parseEther } from 'ethers/lib/utils';
-import { geteERC20ABI } from '../../constants/eerc20ContractABI';
-import { hookProps, UseEncryptedBalanceHookResult } from '@/hooks/config/configs'
-import { DecryptedTransaction } from '@avalabs/eerc-sdk';
+import {  CONTRACTS_ERC20, CONTRACTS_REGISTRARY, ENCRYPTED_ERC_ABI, provider,  REGISTRARY_ABI, } from '@/hooks/config/configs'
+import { useABWallet } from '@/hooks/useABWallet';
 
+interface RegistrationResult {
+  isRegistered: boolean;
+  error?: string;
+  loading: boolean;
+}
 interface AvaxBalance {
     decimals: number;
     formatted: string;
@@ -46,41 +50,70 @@ interface EnhancedWalletProps {
   hasValidNames: boolean;
   onCreateWallet?: () => void;
   onRegisterName?: () => void;
-}
+  
+ }
  
 export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     balance,
     userHoldingWallet,
     hasValidNames,
     onCreateWallet,
-    onRegisterName
+    onRegisterName,
 }) => {
 
     const { isConnected } = useAccount();
     const { address } = useAccount();
-    const { checkAddressRegistered, encryptedBalance, handleRegister, initializeEERC} =  useEERC20Integration()
+
+  //  const { checkAddressRegistered, encryptedBalance, handleRegister, initializeEERC} =  useEERC20Integration()
     // eERC20 specific state
     const [isRegisteredForEERC20, setIsRegisteredForEERC20] = useState(false);
     const [encryptedTokenBalance, setEncryptedTokenBalance] = useState< string>('');
-    const [secretKey, setSecretKey] = useState<string | null>(null);
+    const [secretKey, setSecretKey] = useState<string>('');
+    const [decryptionKey, setDecryptionKey] = useState<string | null>(null);
     const [proofGenerator, setProofGenerator] = useState<eERC20ZKProofGenerator | null>(null);
     const [contractInterface, setContractInterface] = useState<eERC20ContractInterface | null>(null);
-    const [isInitializingEERC20, setIsInitializingEERC20] = useState(false);
-    const [zkProofStatus, setZKProofStatus] = useState<'idle' | 'generating' | 'submitting' | 'completed' | 'failed'>('idle');
-  
+    const [loading, setLoading] = useState(false);
 
+    const [zkProofStatus, setZKProofStatus] = useState<'idle' | 'generating' | 'submitting' | 'completed' | 'failed'>('idle');
+    const [ addressEERC, setAddressEERC ] = useState('');
+    const [error, setError] = useState<string>('');
+    const [ status, setStatus] = useState<string>('')
+    const [ result, setResult ] = useState<RegistrationResult>({
+      isRegistered: false,
+      loading: false
+    });
+    
     // Transaction forms
     const [transferForm, setTransferForm] = useState({ recipient: '', amount: ''});
     const [mintForm, setMintForm] = useState({ amount: ''});
     const [balanceProofForm, setBalanceProofForm] = useState({ minBalance: ''});
-    
+    const [depositTokenAddress, setDepositTokenAddress] = useState<string>('');
+    const [depositAmount, setDepositAmount] = useState<string>('');
+    const [withdrawTokenId, setWithdrawTokenId] = useState<string>('');
+    const [withdrawAmount, setWithdrawAmount] = useState<string>('');
+    const [burnAmount, setBurnAmount] = useState<string>('')
     const [activeTab, setActiveTab] = useState<'regular' | 'encrypted'>('regular');
-    const [showKeyGeneration, setShowkeyGeneration] = useState(false);
+  //  const [targetAddress, setTargetAddress] = useState('');
+    const publicClient: any = usePublicClient();
+    const  walletClient: any = useWalletClient();
     const { data: avaxBalance } = useBalance({
         address,
-        chainId: avalanche?.id || avalancheFuji.id
+        chainId: avalanche?.id || avalancheFuji.id || hardhat.id || polygon.id 
+        || sepolia.id || arbitrumSepolia.id 
+        || optimismSepolia.id || polygonAmoy.id 
       });
+    const [isDeposit, setDeposit] = useState(false);
+    const [isTransfer, setTransfer] = useState(false);
+    const abWallet = useABWallet();
+      
+      
+    const [encryptedBalance] = useState<EncryptedBalance>({
+      C1: ["0", "0"],
+      C2: ["0", "0"]
+    })
     
+    const [currentBalance] = useState<string>('1000'); // const actualEncryptedBalance = contractInterface?.getBalance('', ''); 
+
     if (!isConnected) {
         return (
         <div className="text-center py-8 text-gray-400">
@@ -93,79 +126,109 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     // eERC20 INITIALIZATION
     // ========================================================================================
 
-    const provider = new ethers.providers.JsonRpcProvider('https://api.avax-test.network/ext/bc/C/rpc');
+    
+    const signer =  provider.getSigner();
 
-    const signer =  provider.getSigner()
+    const anyChainId = provider.getNetwork();
 
     useEffect(() => {
       if (isConnected && address && signer && !proofGenerator) {
-    //    initializeEERC20System();
-     loadUserEERC20State(address);
+        initializeEERC20System();
+        loadUserEERC20State(address);
       }
     }, [isConnected, address, signer]);
 
         // Check if user can access eERC20 features
-    const canAccessEncrypted = hasValidNames;
+    const canAccessEncrypted = Wallet.isSigner(address) || hasValidNames || address?.codePointAt.length !== 0;
 
+    const initializeEERC20System = async () => {
+        const provider = new ethers.providers.Web3Provider(window.ethereum);
+  
+        const auditoPublicKey: [string, string] = ["0", "0"];//await proofGenerator.derivePublicKey(pk.call.toString());
+        const generator = await initializeProofGenerator(provider, auditoPublicKey);
+
+        const contract =  await initializeContractInterface(
+              CONTRACTS_ERC20,
+              ENCRYPTED_ERC_ABI,
+              signer,
+              generator
+            );
+
+          if (publicClient && walletClient && address) {
+            
+            //Initialize proof generator with audito public
+            setProofGenerator(generator);
+            
+            // Initialize contract interface
+            setContractInterface(contract);
+      }
+     
+      return {publicClient, walletClient, address};
+
+    }
     // Check registration status on mount
     useEffect(() => {
         if (address && canAccessEncrypted) {
-            checkAddressRegistered(address);
+            checkRegistration(address);
         }
     }, [address, canAccessEncrypted, isRegisteredForEERC20]);
-/**
-    const initializeEERC20System = async () => {
-      if (!signer || !address) return;
+
+    const checkRegistration = async (address: string) => {
+
+      if (!address || !publicClient) return false;
+
+      setResult({ isRegistered: false, loading: true});
 
       try {
-        setIsInitializingEERC20(true);
-        console.log('🚀️ Initializing eERC20 system for AB Smart Wallet...');
+        const contracts_registrary = new ethers.Contract(CONTRACTS_REGISTRARY, REGISTRARY_ABI, signer);
+        const registrationResult: boolean =  await contracts_registrary.isUserRegistered(address);
 
-        // Initialize proof generator
-        const pg = new eERC20ZKProofGenerator(provider);
-
-        // fetch intiailization from the server
-        const response = await fetch('/api/eerc20-integration', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+        setResult({
+          isRegistered: registrationResult,
+          error:  undefined,
+          loading: false
         });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData || 'Initailization failed');
-        
-        }
-        await response.json();
-        setProofGenerator(pg);
-
-        // Initialize contract interface
-        // fuji eERC20/my subnet eERC20 smart contract
-        const contractAddress = process.env.NEXT_PUBLIC_EERC20_CONTRACT || '0x';
-        const abi = geteERC20ABI();
-
-        const ci = new eERC20ContractInterface(contractAddress, abi, signer, pg);
-
-        setContractInterface(ci);
-
-        // load user's eERC20 state
-        await loadUserEERC20State(address, pg);
-
-        console.log('✅️ eERC20 system initialized successfully');
-      } catch (error: any) {
-        console.error('❌️ eERC20 initialized failed:', error);
-        alert(`eERC20 initialization failed: ${error.message}`);
-      } finally {
-        setIsInitializingEERC20(false);
+      } catch (error) {
+        setResult({
+          isRegistered: false,
+          error: error instanceof Error ? error.message : 'Unkown error',
+          loading: false
+        });
       }
-    }; */
- 
+    }
+
+    const handleRegister = async () => {
+      if (!walletClient) return;
+
+      const addr =  signer._address
+
+      const chainId = (await anyChainId).chainId
+
+      try {
+        setZKProofStatus('generating');
+        const registrationResult = await contractInterface?.register(addr, chainId, secretKey);
+        
+        setZKProofStatus('submitting');
+
+        return {
+          success: true,   
+          decryptionKey: registrationResult?.type,
+          transactionHash: registrationResult?.hash 
+        }
+      } catch (error: any) {
+
+        setZKProofStatus('failed');
+        console.error('falied to register', error);
+
+        return {success: false, error: error.message}
+      }
+    }
+
     const loadUserEERC20State = async (userAddress: string) => {
       try {
         // Check registration status on-chain
-        const isRegistered = await checkAddressRegistered(userAddress);
-        setIsRegisteredForEERC20(isRegistered);
+        const isRegistered = await checkRegistration(userAddress);
+        setIsRegisteredForEERC20(true);
 
         // Load or generate secret key
         const sk = await loadOrGenerateSecretKey(userAddress);
@@ -173,50 +236,21 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
 
         // Load encrypted balance if registered
         if (isRegistered) {
-          const encBalance = await encryptedBalance(userAddress);
-          setEncryptedTokenBalance(encBalance.encryptedBalance);
+          const encryptedBalance = await contractInterface?.getBalance(userAddress, '')//useEncryptedBalance();
+          //setEncryptedTokenBalance(encBalance.encryptedBalance);
         }
 
+        const encryptedBalance =  await contractInterface?.getBalance(userAddress, '')//useEncryptedBalance();
+          
       } catch (error: any) {
         console.error('Failede to load eERC20 state:', error);
       }
     };
 
+  
     // ========================================================================================
     // eERC20 OPERATIONS
     // ========================================================================================
-
-    const handleEncryptedRegistration = async () => {
-      if (!contractInterface || !address || !signer) {
-        alert('System not ready for registration');
-        return;
-      }
-
-      try {
-        setZKProofStatus('generating');
-
-        const chainId = await signer.getChainId();
-        console.log('🔏️ Generating registration proof...');
-
-        const tx = await contractInterface.register(address, chainId);
-
-        setZKProofStatus('submitting');
-        console.log('📤️ Submitting registration transaction...');
-
-        const receipt = await tx.wait();
-
-        setZKProofStatus('completed');
-        console.log('✅️ Registration completed:', receipt);
-
-        // Update state
-        setIsRegisteredForEERC20(true);
-        setEncryptedTokenBalance('0');
-      } catch (error: any) {
-        console.error('❌️ Registration failed:', error);
-        setZKProofStatus('failed');
-        alert(`Registration failed: ${error.message}`);
-      }
-    };
 
     const handleEncryptedTransfer = useCallback(async () => {
       if (!contractInterface || !secretKey || !transferForm.recipient || !transferForm.amount) {
@@ -234,10 +268,12 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
 
         const tx = await contractInterface.transfer(
           transferForm.recipient,
+          '0',
           amount,
           currentBalance,
+          encryptedBalance,
           secretKey,
-          nonce
+          'Transfer via eERC20'
         );
 
         setZKProofStatus('submitting');
@@ -262,44 +298,8 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       }
     }, []);
 
-    const handleBalanceProof = useCallback(async () => {
-      if (!proofGenerator || !secretKey || !balanceProofForm.minBalance || !address) {
-        alert('Please enter minimum balance to prove');
-        return;
-      }
-
-      try {
-        setZKProofStatus('generating');
-        console.log('🔐️ Generating balance proof...');
-
-        const actualBalance = parseEther(encryptedTokenBalance).toString();
-        const minBalance = parseEther(balanceProofForm.minBalance).toString();
-
-        const proof = await proofGenerator.generateBalanceProof(
-          address,
-          actualBalance,
-          minBalance,
-          secretKey
-        );
-
-        setZKProofStatus('completed');
-        console.log(`🔏️ Balance proof generated successfully: ${proof}`);
-        
-        setBalanceProofForm({ minBalance: ''});
-      } catch (error: any) {
-        console.error('❌️ Balance proof failed:', error);
-        setZKProofStatus('failed');
-
-        if (error.message.includes('Insufficient balance')) {
-          alert('❌️ Insufficient balance for the requested proof');
-        } else {
-          alert(`Balance proof failed: ${error.message}`);
-        }
-      }
-    }, []);
-
     const handleMintTokens = useCallback(async () => {
-      if (!proofGenerator || !secretKey || !mintForm.amount || !address || !checkAddressRegistered) {
+      if (!proofGenerator || !secretKey || !mintForm.amount || !address ) {
         alert('Please enter amount');
         return;
       }
@@ -307,14 +307,21 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       try {
         setZKProofStatus('generating');
         console.log('🔐️ Generating mint proof...');
+        setZKProofStatus('submitting');
 
         const amount = parseEther(mintForm.amount).toString();
+
+        const chainId = (await anyChainId).chainId
+
+        const nonce =  signer.getTransactionCount;
+
+        const nullifierHash = await proofGenerator.generateNullifier(address, nonce.toString(), secretKey)
 
         const proof = await proofGenerator.generateMintingProof(
           address,
           amount,
-          address,
-          secretKey
+          chainId,
+          nullifierHash
         );
 
         setZKProofStatus('completed');
@@ -332,61 +339,160 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       } catch (error: any) {
         console.error('❌️ Minting failed:', error);
         setZKProofStatus('failed');
-        alert(`Minting failed: ${error.message}`)
+        setStatus(`Minting failed: ${error.message}`)
       }
     }, []);
 
-  
-/**    const handleKeyGeneration = useCallback(async () => {
-        setShowkeyGeneration(true);
-        try {
-            await handleGenerateKey();
-        } finally {
-            setShowkeyGeneration(false);
-        }
-    }, [handleGenerateKey]);
+    const handleEncryptedBurn = useCallback(async () => {
+      if (!contractInterface || !secretKey) {
+        setError('Missing required fields');
+        return;
+      }
 
-    const handleRegistation = useCallback(async () => {
-        try {
-            const result = await handleRegister();
-            if (result?.success) {
+      setLoading(true);
+      setZKProofStatus('generating');
+      setError('');
+      setStatus('Generating burn proof...');
 
-                // Registration successful - could show success message
-                console.log('Registration successful:', result.transactionHash);
-            }
-        } catch (err) {
-            console.error('Registration error:', err);
-        }
-    }, [handleRegister]);
- */ 
-    // Encrypted operations (placeHolders)
+      try {
+        const tx = await contractInterface.privateBurn(
+          burnAmount,
+          currentBalance,
+          encryptedBalance,
+          secretKey,
+          'Burn via eERC20'
+        );
+        setZKProofStatus('submitting');
+
+        setStatus('Transaction submitted. Waiting for confirmation');
+        await tx.wait();
+        setZKProofStatus('completed');
+        setStatus('✅️ Burn successful');
+        setBurnAmount('');
+      } catch (err: any) {
+        setZKProofStatus('failed');
+        setError(`Burn failed: ${err.message}`);
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    }, [])
+
     const handleEncryptedDeposit = useCallback(async () => {
-        try {
-            // Implement encrypted deposit using encryptedBalance.mint()
-            console.log('Encrypted deposit');
-        } catch (err) {
-            console.error('Encrypted deposit failed:', err);
+      if  (!contractInterface || !proofGenerator) {
+        setError('COntract not initialized');
+        return;
+      }
+      
+      try {
+        let secretKey = signer;
+        // Generate PCT foir deposit amount
+        const amountPCT = await proofGenerator.generateBalancePCT(depositAmount, secretKey.toString());
+        setZKProofStatus('generating');
+        const tx = await contractInterface.deposit(
+          depositAmount,
+          depositTokenAddress,
+          amountPCT,
+          'Deposit via eERC20'
+        );
+        setZKProofStatus('submitting');
+        setStatus('Transaction submitted. Waiting for conformation...');
+        await tx.wait();
+        setZKProofStatus('completed');
+        setStatus('✅️ Deposit successful!');
+        setDepositAmount('');
+        } catch (err: any) {
+          setZKProofStatus('failed');
+          setError(`Encrypted deposit failed: ${err.message}`);  
+          console.error('', err);
+        } finally {
+          setLoading(false);
         }
     }, []);
 
     const handleEncryptedWithdraw = useCallback(async () => {
-        try {
-            // Implement encrypted withdraw using encryptedBalance.burn()
-            console.log('Encrypted withdraw');
-        } catch (err) {
-            console.error('Encrypted withdraw failed:', err);
-        }
+      if (!contractInterface || !secretKey) {
+        setError('Missing withdraw proof...');
+        return;
+      }
+      
+      setLoading(true);
+      setError('');
+      setZKProofStatus('generating');
+      setStatus('Generating withdraw proof...');
+
+      try {
+        const tx = await contractInterface.withdraw(
+          withdrawTokenId,
+          withdrawAmount,
+          currentBalance,
+          encryptedBalance,
+          secretKey,
+          'Withdraw via eERC20'
+        );
+
+        setStatus('Transaction submitted. Waiting for confirmation...');
+        setZKProofStatus('submitting');
+        await tx.wait();
+
+        setStatus('✅️ Withdrawal successful');
+        setZKProofStatus('submitting');
+        setWithdrawAmount('')
+      } catch (err: any) {
+        setError(`Withdrawal failed: ${err.message}`);
+        setZKProofStatus('failed');
+        console.error(err);            
+      } finally {
+        setLoading(false);
+      }
     }, []);
 
-    // private mints
-    const handlePrivateMints = useCallback(async () => {
-        try {
-            // Implement private mint using encryptedBalance.Mint()
-            console.log('Private mint');
-        } catch (err) {
-            console.error('Private mint failed:', err);
-        }
+    ////////////////////////////////////////////////////////////////////////////////////
+    //================= REGULAR WALLET ========================= REGULAR WALLET ======//
+    ////////////////////////////////////////////////////////////////////////////////////
+    const handleDeposit = useCallback(async () => {
+      setDeposit(true);
+      
+      try {
+        await abWallet.deposit(depositTokenAddress, Number(depositAmount));
+        console.log("depositing funds");
+      } catch (error: any) {
+        throw error;
+      } finally {
+        setDeposit(false);
+      }
     }, []);
+    
+    const handleTransfer = useCallback(async () => {
+      
+      setTransfer(true);
+      
+      try {
+        await abWallet.transfer(depositTokenAddress, transferForm.recipient, Number(transferForm.amount));
+        console.log("transfering funds");
+      } catch (error: any) {
+        console.error("transfer failed", error);
+      } finally {
+        setTransfer(false);
+      }
+    }, []); 
+
+    const handleWithdraw = useCallback(async () => {
+
+      setLoading(true);
+
+      try {
+        
+        await abWallet.withdraw();
+        console.log('Withdrawing funds');
+      
+      } catch (error: any) {
+        throw error;
+
+      } finally {
+        setLoading(false)
+      }
+    }, [])
 
     // ========================================================================================
     // HELPER FUNCTIONS
@@ -434,10 +540,10 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
           </div>
          </div>
       )
-    )
+    );
 
     const renderRegistrationPanel = () => (
-      !isRegisteredForEERC20 && canAccessEncrypted && (
+      !isRegisteredForEERC20 && canAccessEncrypted &&  (
             <div className="bg-gradient-to-br from-purple-900/20 to-indigo-900/20 rounded-xl p-6 border border-purple-500/30">
                 <div className="flex items-center mb-4">
                     <Shield className="mr-3 text-purple-400" size={24} />
@@ -482,6 +588,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
             </div>
         )
     );
+
     const renderEncryptedActions = () => (
       <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 
       border border-gray-700">
@@ -490,6 +597,18 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
           Encrypted Operations
         </h3>
 
+        {/**Status message */}
+        { status && (
+          <div className="mb-4 bg-blue-900/30 border border-blue-500/50 p-4 rounded-lg">
+            <p className="text-blue-300">{status}</p>
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-4 bg-red-900/30 border border-red-500/50 p-4 rounded-lg">
+            <p className="text-red-300">{error}</p>
+          </div>
+        )}
         {zkProofStatus !== 'idle' && (
           <div className="mb-4 bg-gray-800/50 rounded-lg p-3">
             <div className="flex items-center space-x-3">
@@ -509,8 +628,8 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
           </div>
         )}
         {/** Encrypted Transfer Form */}
-        <div className="mb-6">
-          <label className="block text-gray-400 text-sm mb-2">Private Transfer</label>
+        <div className="mb-6 bg-gray-800/50 rounded-lg p-4">
+          <label className="block text-gray-300 text-sm font-medium mb-3">🔏️ Private Transfer</label>
           <div className="space-y-3">
             <input 
              type='text'
@@ -518,16 +637,16 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
              value={transferForm.recipient}
              onChange={(e) => setTransferForm({...transferForm, recipient: e.target.value})}
              className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 
-             focus:border-purple-500 focus:outline-none"
+             focus:border-purple-500 focus:outline-none placeholder-gray-400"
              />
              <div className="flex space-x-3">
               <input
-               type="number"
-               placeholder='Amount (eERC)'
+               type="text"
+               placeholder='Enter Amount (eERC)'
                value={transferForm.amount}
-               onChange={(e) => setTransferForm({...transferForm, recipient: e.target.value})}
-               className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600
-               focus:border-purple-500 focus:outline-none" 
+               onChange={(e) => setTransferForm({...transferForm, amount: e.target.value})}
+               className="flex-1 bg-gray-700 text-white px-3 py-2 rounded border border-gray-600
+               focus:border-purple-500 focus:outline-none  placeholder-gray-400" 
                />
                <button
                 onClick={handleEncryptedTransfer}
@@ -543,35 +662,8 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
             Amount and balance remain completely private
           </p>
         </div>
-
-        {/**Balance Proof */}
-        <div className="bg-gray-800 rounded-lg p-4">
-          <h4 className="text-white font-semibold mb-3">🔍️ Prove Balance</h4>
-          <div className="space-y-3">
-            <input
-             type='number'
-             placeholder='Minimum balance to prove'
-             value={balanceProofForm.minBalance}
-             onChange={(e) => setBalanceProofForm({...balanceProofForm, minBalance: e.target.value})}
-             className='w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600
-             focus:outline-none text-sm' 
-             />
-             <button 
-              onClick={handleBalanceProof}
-              disabled={zkProofStatus !== 'idle' || !balanceProofForm.minBalance}
-              className="w-full bg-gradient-to-r from-yellow-600 to-orange-600
-              text-white py-2 px-4 rounded-lg hover:from-yellow-700 hover:to-orange-700
-              transition-all duration-300 font-medium disabled:opacity-50 text-sm"
-              >
-                Generate BalanceProof
-              </button>
-          </div>
-          <p className="text-gray-400 text-xs mt-2">
-            ✨️ Prove minimum balance without revealing actual amount
-          </p>
-        </div>
         {/**Mint Tokens (admin/testing) */}
-        <div className="bg-gray-800 rounded-lg p-4">
+        <div className="mb-6 bg-gray-800 rounded-lg p-4">
           <h4 className="text-white font-semibold mb-3">💽️⚡️MInt Tokens</h4>
           <div className="space-y-3">
             <input
@@ -580,14 +672,15 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
              value={mintForm.amount} 
              onChange={(e) => setMintForm({...mintForm, amount: e.target.value})}
              className='w-full bg-gradient-to-r from-purple-700 text-white px-3 py-2
-             rounded border border-gray-600 focus:border-purple-500 focus:outline-none text-sm'
+             rounded border border-gray-600 focus:border-purple-500 
+              focus:outline-none text-sm placeholder-gray-400'
              />
              <button 
              onClick={handleMintTokens}
              disabled={zkProofStatus !== 'idle' || !mintForm.amount}
              className='w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white
              py-2 px-4 rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all
-             duration-300 font-medium disabled:opacity-50 text-sm'>
+             duration-300 font-medium disabled:bg-gray-600'>
               Mint eETH Tokens
              </button>
           </div>
@@ -595,16 +688,100 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
             🔧️ Testing/Admin feature
           </p>
         </div>
+
+        {/**Deposit encrypted Tokens (admin/testing) */}
+        <div className="mb-6 bg-gray-800/50 rounded-lg p-4">
+          <h4 className="text-green-400 font-semibold mb-4">
+            💰️ Depsoit
+          </h4>
+          <div className="space-y-3">
+            <input 
+            type='text'
+            value={depositTokenAddress}
+            onChange={(e: any) => setDepositTokenAddress(e.target.value)}
+            placeholder='token address'
+            className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600
+            focus:border-green-500 focus:outline-none placeholder-gray-400"
+            />
+            <input 
+              type="text"
+              value={depositAmount}
+              onChange={(e: any) => setDepositAmount(e.target.value)}
+              placeholder='Amount'
+              className="w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600
+              focus:border-green-500 focus:outline-none placeholder-gray-400"
+            />
+          <button onClick={handleEncryptedDeposit}
+            disabled={loading || !depositAmount || !depositTokenAddress}
+            className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white
+            py-3 px-4 rounded-lg transition-colors font-medium">
+              Encrypted Deposit
+            </button>  
+          </div>
+        </div>
+
+        {/**Privacy burn token feature */}
+        <div className="mb-6 bg-gray-800/50 rounded-lg p-4">
+          <h3 className="text-red-600 font-semibold mb-3 ">🔥️ Private Burn</h3>
+          <div className="space-y-3">
+            <input 
+            type='text'
+            value={burnAmount}
+            onChange={(e: any) => setBurnAmount(e.target.value)}
+            placeholder=' Amount to Burn'
+            className="w-full bg-gray-700 text-white px-3 py-2 rounded border
+            border-gray-600 focus:border-red-500 focus:outline-none placeholder-gray-400"/>
+            <button 
+              onClick={handleEncryptedBurn} 
+              disabled={loading || !burnAmount || !secretKey}
+              className="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-600 text-white
+              py-3 px-4 rounded-lg transition-colors font-medium">
+                Burn
+              </button>
+          </div>
+        </div>
+
+        {/**Privacy withdraw feature */}
+        <div className='bg-gray-800/50 rounded-lg p-4'>
+          <h4 className="text-orange-400 font-semibold mb-3">📤️ Withdraw</h4>
+          <div className="space-y-3">
+            <input 
+            type='text'
+            value={withdrawAmount}
+            onChange={(e: any) => setWithdrawAmount(e.target.value)}
+            placeholder=' Enter Amount'
+            className="w-full bg-gray-700 text-white px-3 py-2 
+            rounded border border-gray-600 focus:border-orange-500 
+            focus:outline-none placeholder-gray-400"
+            />
+            <input 
+            type='text'
+            value={withdrawTokenId}
+            onChange={(e: any) => setWithdrawTokenId(e.target.value)}
+            placeholder='Enter tokenId'
+            className="w-full bg-gray-700 text-white px-3 py-2 rounded border
+            border-gray-600 focus:border-orange-500 focus:outline-none placeholder-gray-400"
+            />
+            <button onClick={handleEncryptedWithdraw} disabled={loading || !withdrawAmount || !secretKey}
+              className="w-full bg-orange-600 hover:bg-orange-700
+               disabled:bg-gray-600 text-white py-3 px-4 rounded-lg transition-colors font-medium">
+                Withdraw
+            </button>
+          </div>
+        </div>
+
         {/**Privacy Features Info */}
-        <div className="bg-purple-900 rounded-lg p-4 border border-purple-600/30">
-        <h4 className="text-purple-300 font-semibold mb-3">🛡️ Privacy Features</h4>
+        <div className="mt-6 bg-purple-900/30 rounded-lg p-4 border border-purple-600/30">
+        <h4 className="text-purple-300 font-semibold mb-3 flex items-center">
+          <Shield className="mr-2" size={18} />
+          Privacy Features</h4>
         <div className="space-y-2">
           <div className="flex items-center text-green-400 text-sm">
             <div className="w-2 h-2 bg-green-400 rounded-full mr-2"></div>
             <span>Encrypted balances</span>
           </div>
           <div className="flex items-center text-green-400 text-sm">
-            <div className="w-2 h-2 bg-green-400 rounded-full mr-2">
+            <div className="w-2 h-2 bg-green-400 rounded-full mr-2"></div>
               <span>Private transfer amounts</span>
             </div>
             <div className="flex items-center text-green-400 text-sm">
@@ -614,7 +791,6 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
             <div className="flex items-center text-green-400 text-sm">
               <div className="w-2 h-2 bg-green-400 rounded-full mr-2"></div>
               <span>No transaction linkability</span>
-            </div>
           </div>
         </div>
       </div>
@@ -627,18 +803,73 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         <ArrowDown className="mr-2 text-blue-400" size={20} />
         Quick Actions
       </h3>
-      <div className="space-y-3">
-         <button 
-              className={`w-full py-3 px-4 rounded-lg transition-all duration-300 font-medium
-                ${isConnected 
-                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                  : 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                }`}
-              disabled={!isConnected}
-            >
-          Deposit AVAX
-        </button>
-        <button 
+
+      { status && (
+          <div className="mb-4 bg-blue-900/30 border border-blue-500/50 p-4 rounded-lg">
+            <p className="text-blue-300">{status}</p>
+          </div>
+        )}
+
+      {error && (
+          <div className="mb-4 bg-red-900/30 border border-red-500/50 p-4 rounded-lg">
+            <p className="text-red-300">{error}</p>
+          </div>
+        )}
+
+      {/** Deposit */}  
+      <div className="space-y-4">
+        <div className="bg-grray-800/50 rounded-lg p-4">
+        <h4 className="text-gray font-medium mb-3">💎️ Deposit</h4> 
+         <div className="space-y-3">
+          <input 
+           type="text"
+           value={depositAmount}
+           onChange={(e: any) => setDepositAmount(e.target.value)}
+           placeholder='Amount to deposit'
+           className="w-full bg-gray-700 text-white px-3 py-2
+           rounded border border-gray-600 focus:border-green-500
+           focus:outline-none placeholder-gray-400"
+          />
+          <button
+           onClick={handleDeposit}
+           className={`w-full py-3 px-4 rounded-lg transition-all
+           duration-300 font-medium ${isConnected ? 'bg-green-600 hover:bg-green-700 text-white'
+            : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+           }`}
+           disabled={!isConnected}>
+            Deposit AVAX
+           </button>
+        </div>
+      </div>
+      {/**Transfer */}
+      <div className="bg-gray-800/50 rounded-lg p-4">
+       <h4 className="text-gray-300 font-medium mb-3">💸️ Transfer</h4>
+       <div className="space-y-4">
+
+        <input 
+         type='text'
+         value={depositTokenAddress}
+         onChange={(e: any) => setDepositTokenAddress(e.target.value)}
+         placeholder=' Enter token address'
+         className='w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600
+         focus:border-blue-500 focus:outline-none placeholder-gray-400'
+         />
+         <input 
+         type='text'
+         value={transferForm.recipient}
+         onChange={(e: any) => setTransferForm({...transferForm, recipient: e.target.value})}
+         placeholder='Recipient address'
+         className="w-full bg-gray-700 text-white px-3 py-2 rounded
+         border border-gray-600 focus:border-blue-500 focus:outline-none placeholder-gray-400"
+         />
+         <input 
+         type='text'
+         value={transferForm.amount}
+         onChange={(e: any) => setTransferForm({...transferForm, amount: e.target.value})}
+         placeholder='Enter amount to transfer'
+         className='w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 
+         focus:border-blue-500 focus:outline-none placeholder-gray-400'/> 
+         <button onClick={handleTransfer}
               className={`w-full py-3 px-4 rounded-lg transition-all duration-300 font-medium
                 ${isConnected 
                   ? 'bg-blue-600 hover:bg-blue-700 text-white'
@@ -646,8 +877,11 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
                 }`}
               disabled={!isConnected}
             >Transfer funds
-        </button>
-        <button 
+         </button>
+        </div>
+       </div>
+
+        <button onClick={handleWithdraw} 
               className={`w-full py-3 px-4 rounded-lg transition-all duration-300 font-medium
                 ${isConnected 
                   ? 'bg-orange-600 hover:bg-orange-700 text-white'
@@ -678,18 +912,40 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
           <span className="text-gray-400">AB bonds</span>
           <span className="text-white font-medium">{balance.bonds} Bonds</span>
         </div>
-        {isRegisteredForEERC20  && (
-          <div className="flex justify-between items-center py-2 border-b border-gray-700">
-            <span className="text-gray-400 flex items-center">
-              <Lock className="mr-1" size={12} />
-              Encrypted eERC20
-            </span>
-            <span className="text-green-400 font-medium">{balance.encrypted} eERC</span>
-          </div>
-        )}
         <div className="flex justify-between items-center py-2">
           <span className="text-gray-400">Incentive Tokens</span>
           <span className="text-gray-500">Coming soon</span>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderEncryptedBalanceOverView = () => (
+    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl
+    p-6 border border-gray-700">
+      <h3 className="text-xl font-bold text-white mb-4 flex items-center">
+        <Lock className="mr-2 text-purple-400" size={20} />
+        Encrypted balance
+      </h3>
+      <div className="space-y-4">
+        <div className="flex justify-between items-center py-2 border-b border-gray-700">
+          <span className="text-gray-400 flex items-center">
+            <Lock className="mr-1" size={12} />
+            Encrypted ERC20
+          </span>
+          <span className="text-green-400 font-medium">{balance.encrypted} eERC20</span>
+        </div>
+        <div className="flex justify-between items-center 
+        py-2 border-b border-gray-700">
+          <span className="text-gray-400">AB Bonds</span>
+          <span className="text-white font-medium">{balance.bonds}</span>
+        </div>
+        <div className="bg-purple-900/30 border border-purple-600/30
+        rounded-lg p-3 mt-4">
+          <p className="text-purple-300 text-xs">
+            🔐️ Your balance is encrypted and only visible to you. Transactions are
+            proccessed using zero-knowledge proofs.
+          </p>
         </div>
       </div>
     </div>
@@ -763,12 +1019,11 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         {/** Content based on active tab */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {activeTab === 'regular' ? renderRegularActions() : renderEncryptedActions()}
-            {renderBalanceOverview()}
+            {activeTab === 'regular' ? renderBalanceOverview() : renderEncryptedBalanceOverView()}
         </div>
-        { /** Recent Transactions */}
         
-    
-      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 border border-gray-700">
+        { /** Recent Transactions */}
+        <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 border border-gray-700">
         <h3 className="text-xl font-bold text-white mb-4">Recent Transactions</h3>
         <div className="space-y-3">
           <div className="flex justify-between items-center p-3 bg-gray-800 rounded-lg">

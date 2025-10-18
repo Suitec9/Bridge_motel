@@ -1,72 +1,83 @@
-// ============================================================================================
-// 3. MINT CIRCUIT
-// ============================================================================================
+pragma circom 2.1.9;
 
-/*
-* Proves valid encrypted token minting without revealing amounts
-* Only authorized minters can create new tokens
-*/
+include "./components.circom";
 
-pragma circom  2.1.9;
+template MintCircuit () {
+    signal input ValueToMint;
 
-include "circomlib/circuits/poseidon.circom";
-include "circomlib/circuits/comparators.circom";
-include "circomlib/circuits/bitify.circom";
+    signal input ChainID;
+    signal input NullifierHash;
 
-template eERC20Mint() {
-    // Private inputs
-    signal input amount;
-    signal input secretKey;
-    signal input nonce;
-    signal input randomness;
-    signal input minterPrivateKey;
+    signal input ReceiverPublicKey[2];
+    signal input ReceiverVTTC1[2];
+    signal input ReceiverVTTC2[2];
+    signal input ReceiverVTTRandom;
+    
+    signal input ReceiverPCT[4];
+    signal input ReceiverPCTAuthKey[2];
+    signal input ReceiverPCTNonce;
+    signal input ReceiverPCTRandom;
 
-    // Public inputs
-    signal input recipientAddress;
-    signal input minterAddress;
-    signal input encryptedAmount;
-    signal input commitment;
-    signal input minterSignature;
+    signal input AuditorPublicKey[2];
+    signal input AuditorPCT[4];
+    signal input AuditorPCTAuthKey[2];
+    signal input AuditorPCTNonce;
+    signal input AuditorPCTRandom;
 
-    signal output valid;
+    var baseOrder = 2736030358979909402780800718157159386076813972158567259200215660948447373041;
+    component bitCheck1 = Num2Bits(252);
+    bitCheck1.in <== ValueToMint;
 
-    // Components
-    component poseidonCommitment = Poseidon(4);
-    component poseidonEncryption = Poseidon(3);
-    component poseidonMinterAuth = Poseidon(2);
-    component isPositiveAmount = GreaterThan(64);
-    component isZeroAmount = IsZero();
+    component bitCheck2 = Num2Bits(252);
+    bitCheck2.in <== baseOrder;
 
-    // 1. Verify amount is positive (greater than 0)
-    isZeroAmount.in <== amount;
-    isZeroAmount.out === 0;
+    component lt = LessThan(252);
+    lt.in[0] <== ValueToMint;
+    lt.in[1] <== baseOrder;
+    lt.out === 1;
 
-    isPositiveAmount.in[0] <== amount;
-    isPositiveAmount.in[1] <== 0;
-    isPositiveAmount.out === 1;
+    // Verify receiver's encrypted value is the mint amount
+    component checkReceiverValue = CheckReceiverValue();
+    checkReceiverValue.receiverValue <== ValueToMint;
+    checkReceiverValue.receiverPublicKey[0] <== ReceiverPublicKey[0];
+    checkReceiverValue.receiverPublicKey[1] <== ReceiverPublicKey[1];
+    checkReceiverValue.receiverRandom <== ReceiverVTTRandom;
+    checkReceiverValue.receiverValueC1[0] <== ReceiverVTTC1[0];
+    checkReceiverValue.receiverValueC1[1] <== ReceiverVTTC1[1];
+    checkReceiverValue.receiverValueC2[0] <== ReceiverVTTC2[0];
+    checkReceiverValue.receiverValueC2[1] <== ReceiverVTTC2[1];
 
-    // 2. Verify minter authorization
-    // The minter must prove they have the private key corresponding to the minter address
-    poseidonMinterAuth.inputs[0] <== minterAddress;
-    poseidonMinterAuth.inputs[1] <== minterPrivateKey;
-    minterSignature === poseidonMinterAuth.out;
+	// Verify nullifier hash is not used
+    component checkNullifierHash = CheckNullifierHash();
+    checkNullifierHash.nullifierHash <== NullifierHash;
+    checkNullifierHash.chainID <== ChainID;
+    checkNullifierHash.auditorCiphertext[0] <== AuditorPCT[0];
+    checkNullifierHash.auditorCiphertext[1] <== AuditorPCT[1];
+    checkNullifierHash.auditorCiphertext[2] <== AuditorPCT[2];
+    checkNullifierHash.auditorCiphertext[3] <== AuditorPCT[3];
 
-    // 3. Generate commitment for the newly minted tokens
-    // This commitment will be added to the recipient's balance
-    poseidonCommitment.inputs[0] <== amount;
-    poseidonCommitment.inputs[1] <== secretKey;
-    poseidonCommitment.inputs[2] <== nonce;
-    poseidonCommitment.inputs[3] <== randomness;
-    commitment === poseidonCommitment.out;
+    // Verify receiver's encrypted summary includes the mint amount and is encrypted with the receiver's public key
+    component checkReceiverPCT = CheckPCT();
+    checkReceiverPCT.publicKey[0] <== ReceiverPublicKey[0];
+    checkReceiverPCT.publicKey[1] <== ReceiverPublicKey[1];
+    checkReceiverPCT.pct <== ReceiverPCT;
+    checkReceiverPCT.authKey[0] <== ReceiverPCTAuthKey[0];
+    checkReceiverPCT.authKey[1] <== ReceiverPCTAuthKey[1];
+    checkReceiverPCT.nonce <== ReceiverPCTNonce;
+    checkReceiverPCT.random <== ReceiverPCTRandom;
+    checkReceiverPCT.value <== ValueToMint;
 
-    // 4. Verify encrypted amount for the recipient
-    // This allows the recipient to decrypt and know how much they received
-    poseidonEncryption.inputs[0] <== amount;
-    poseidonEncryption.inputs[1] <== recipientAddress;
-    poseidonEncryption.inputs[2] <== randomness;
-    encryptedAmount === poseidonEncryption.out;
-
-    valid <== 1;
+    // Verify auditor's encrypted summary includes the mint amount and is encrypted with the auditor's public key
+    component checkAuditorPCT = CheckPCT();
+    checkAuditorPCT.publicKey[0] <== AuditorPublicKey[0];
+    checkAuditorPCT.publicKey[1] <== AuditorPublicKey[1];
+    checkAuditorPCT.pct <== AuditorPCT;
+    checkAuditorPCT.authKey[0] <== AuditorPCTAuthKey[0];
+    checkAuditorPCT.authKey[1] <== AuditorPCTAuthKey[1];
+    checkAuditorPCT.nonce <== AuditorPCTNonce;
+    checkAuditorPCT.random <== AuditorPCTRandom;
+    checkAuditorPCT.value <== ValueToMint;
+    
 }
 
-component main = eERC20Mint();
+component main { public [ ReceiverPublicKey, AuditorPublicKey, ReceiverVTTC1, ReceiverVTTC2, ReceiverPCT, ReceiverPCTAuthKey, ReceiverPCTNonce, AuditorPCT, AuditorPCTAuthKey, AuditorPCTNonce, ChainID, NullifierHash ] } = MintCircuit();

@@ -82,7 +82,7 @@ export class CircuitSetUpManager {
         const circuits = [
             'eerc20_registration',
             'eerc20_transfer',
-            'eerc20_balance',
+            'eerc20_withdraw',
             'eerc20_mint',
             'eerc20_burn'
         ];
@@ -156,7 +156,7 @@ export class CircuitSetUpManager {
         const circuits = [
             'eerc20_registration',
             'eerc20_transfer',
-            'eerc20_balance',
+            'eerc20_withdraw',
             'eerc20_mint',
             'eerc20_burn'
         ];
@@ -220,7 +220,7 @@ export class CircuitSetUpManager {
         const circuits = [
             'eerc20_registration',
             'eerc20_transfer',
-            'eerc20_balance',
+            'eerc20_withdraw',
             'eerc20_mint',
             'eerc20_burn'
         ];

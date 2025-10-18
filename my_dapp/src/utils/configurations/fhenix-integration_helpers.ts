@@ -1,4 +1,4 @@
-"use server";
+
 // ============================================================================================
 // FHENIX INTEGRATION HELPERS
 // ============================================================================================
@@ -41,7 +41,7 @@ export class FhenixERC20Integration {
      *  Get Fhenix public key for encryption
      */
     async getPublicKey(): Promise<string> {
-        // In production , get from Ehenix provider
+        // In production , get from Fhenix provider
         return "0x" + "0".repeat(64);
     }
 

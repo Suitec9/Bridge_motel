@@ -21,7 +21,7 @@ interface Contracts {
 }
 
 interface WalletEvent {
-  type: 'WalletCreated' | 'BondPurchased' | 'NameRegistered' | 'eERC20AccessGranted' | 'BondNFTMinted' | 'BondNFTBurned' | 'BondSentPlayer';
+  type: 'WalletCreated' | 'BondPurchased' | 'NameRegistered' |  'BondNFTMinted' | 'BondNFTBurned' | 'BondSentPlayer';
   data: any;
   timestamp: number;
 }
@@ -33,7 +33,21 @@ interface BondPurchaseResult {
 
 interface NameRegistrationResult {
   tx1: ethers.ContractTransaction;
-  tx2: ethers.ContractTransaction | null;
+}
+
+interface DepositResult {
+  tx1: ethers.ContractTransaction;
+}
+
+interface WithdrawResult {
+  tx1: ethers.ContractTransaction
+}
+
+interface TransferResult {
+  tx1: ethers.ContractTransaction;
+  balance: ethers.BigNumber;
+  timeUntilExpiry: ethers.BigNumber;
+  isExpired: boolean;
 }
 
 interface ConnectionResult {
@@ -125,7 +139,6 @@ export const useABWallet = () => {
   const registerNameService = useCallback(async (
     name: string, 
     duration: number, 
-    enablePrivacy: boolean = true
   ): Promise<NameRegistrationResult> => {
     if (!contracts?.nameService) {
       throw new Error("Name service contract not initialized");
@@ -148,15 +161,7 @@ export const useABWallet = () => {
       );
       await tx1.wait();
 
-      let tx2: ethers.ContractTransaction | null = null;
-
-      // Auto-enable eERC20 access
-      if (enablePrivacy) {
-        tx2 = await contracts.nameService.enableeERC20Access(name);
-        await tx2?.wait();
-      }
-
-      return { tx1, tx2 };
+      return  tx1;
     } catch (error) {
       console.error("Name service registration failed:", error);
       throw error;
@@ -164,6 +169,78 @@ export const useABWallet = () => {
       setLoading(false);
     }
   }, [contracts?.nameService]);
+
+  const deposit = useCallback(async (
+    tokenAddress: string,
+    amount: number
+  ): Promise<DepositResult> => {
+
+    if (!contracts || !account) {
+      throw new Error('account not connected or wallet does not exsit');
+    }
+
+    setLoading(true);
+    try {
+     const tx = await contracts.factory.depositFundsToWallet(tokenAddress, amount);
+     await tx.wait();
+     
+     return tx;
+    
+    } catch (error) {
+      console.error("failed to make a deposit", error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+    
+  }, [contracts?.factory, account]);
+  
+  const transfer = useCallback(async (
+    tokenAddress: string,
+    recipient: string,
+    amount: number,
+  ): Promise<TransferResult> => {
+    if (!contracts?.factory || !amount || !account || account === recipient || amount > 0) {
+      throw new Error("Contracts not initialize or recipient is sender");
+    }
+
+    try {
+      setLoading(true);
+
+      const tx = await contracts.factory.transferFundsFromHolding(
+        tokenAddress, 
+        recipient, 
+        ethers.utils.formatEther(amount)
+      );
+
+      await tx.wait()
+
+      return {tx1: tx.ContractTransaction, balance: tx.balance, timeUntilExpiry: tx.timeUntilExpiry, isExpired: tx.isExpired}
+    } catch (error: any) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, [contracts?.factory, account])
+
+  const withdraw = useCallback(async ():Promise<WithdrawResult> => {
+    if (!contracts?.factory || !account ) {
+      throw new Error("Contract not initialized or account don't exsit");
+    }
+
+    try {
+      setLoading(true);
+
+      const tx = await contracts.factory.withdraw();
+      await tx.wait();
+
+      return tx.ContractTransaction;
+    } catch (error: any) {
+      throw error
+    } finally {
+      setLoading(false);
+    }
+  }, [contracts?.factory, account]);
 
   const purchaseBonds = useCallback(async (
     bondType: number, 
@@ -339,19 +416,8 @@ export const useABWallet = () => {
       }
     };
 
-    const handleeERC20AccessGranted = (user: string, name: string) => {
-      if (user.toLowerCase() === account.toLowerCase()) {
-        const event: WalletEvent = {
-          type: 'eERC20AccessGranted', 
-          data: { name },
-          timestamp: Date.now()
-        };
-        setEvents(prev => [event, ...prev]);
-      }
-    };
 
     contracts.nameService.on("NameRegistered", handleNameRegistered);
-    contracts.nameService.on("eERC20AccessGranted", handleeERC20AccessGranted);
 
     return () => {
       contracts.nameService.removeAllListeners();
@@ -417,6 +483,9 @@ export const useABWallet = () => {
     // Actions
     connectWallet,
     createWallet,
+    deposit,
+    transfer,
+    withdraw,
     registerNameService,
     purchaseBonds,
     sendBondsToPlayer,

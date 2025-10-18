@@ -49,12 +49,12 @@ export async function setupERC20ZKSystem(
         const proofGenerator = new eERC20ZKProofGenerator(provider);
 
         // 3. Initialize circuits
-        const circuits = ['REGISTRATION', 'TRANSFER', 'BALANCE_PROOF', 'MINT_PROOF'] as const;
+        const circuits = ['REGISTRATION', 'TRANSFER', 'MINT_PROOF'] as const;
 
         for (const circuit of circuits) {
             const circuitName = circuit.toLowerCase().replace('_', '_');
             const files = setupManager.getCircuitFiles(circuitName);
-            await proofGenerator.intializeCircuit(circuit, files);
+            new eERC20ZKProofGenerator(provider, ["",""]);
         }
 
         // 4. Deploy contracts if requested

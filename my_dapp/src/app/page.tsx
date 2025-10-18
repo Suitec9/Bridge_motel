@@ -1,5 +1,6 @@
 "use client"
 import React, { useState, useEffect, useCallback } from "react";
+
 import { 
   Wallet, 
   Shield, 
@@ -13,20 +14,23 @@ import {
   Zap, 
   Lock, 
   Unlock, 
-  ArrowUpDown 
+  ArrowUpDown, 
+  FileText
 } from "lucide-react";
 
 import { EnhancedWallet } from "@/components/EnhancedWallet";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useAccount, useBalance, useDisconnect } from "wagmi";
+import { useAccount, useBalance, useCall, useDisconnect } from "wagmi";
 import { avalanche, avalancheFuji } from "viem/chains";
 import { formatEther } from "viem";
 import { eERC20ContractInterface, eERC20ZKProofGenerator } from "@/utils/zkProofInputs";
-import { ethers } from "ethers";
+import { ethers, providers } from "ethers";
 import { useABWallet } from "@/hooks/useABWallet";
-import { features } from "process";
+import { provider } from "../hooks/config/configs";
 import { geteERC20ABI } from "../../constants/eerc20ContractABI";
-
+import { useRouter } from "next/navigation";
+import { NameService } from "@/components/NameServiceComponent";
+import  Image  from "next/image";
 interface EnhancedWalletProps {
   balance: any;
   userHoldingWallet: string;
@@ -43,9 +47,8 @@ const MotelSmartWallet = () => {
   const [hasValidNames, setHasValidNames] = useState(false);
   const [isCreatingWallet, setIsCreatingWallet] = useState(false);
   const [isRegisteringName, setIsRegisteringName] = useState(false);
-  const abWallet = useABWallet();
+   const abWallet = useABWallet();
 
-  
   // eERC20 specific state
   const [eERC20System, setEERC20System] = useState<{
     proofGenerator: eERC20ZKProofGenerator | null;
@@ -59,9 +62,10 @@ const MotelSmartWallet = () => {
 
  
   const [ bonds, setBonds ] = useState([
-    {id: 1, type: 'Premium', value: 100, discount: 15, available: 25 },
-    {id: 2, type: 'Elite', value: 250, discount: 15, available: 3 },
-    { id: 3, type: 'Lenendary', value: 500, discount: 15, available: 3 }
+    {id: 1, type: 'Premium', value: 1.11, discount: 15, available: 25 },
+    {id: 2, type: 'PremiumII', value: 5.555, discount: 15, available: 3 },
+    {id: 3, type: 'Elite', value: 30.5555, discount: 15, available: 3 },
+    { id: 4, type: 'Legendary', value: 110, discount: 15, available: 1 }
   ]);
 
   /**const handleConnect = () => {
@@ -86,38 +90,32 @@ const MotelSmartWallet = () => {
   // ==========================================================================================
   // eERC20 SYSTEN INITIALIZATION
   // =====================================
-  /**
-   * =====================================================
+
+
   useEffect(() => {
     
-  });
-   */
+    initializeEERC20Integration();
+    
+  }, []);
+   
+  const router = useRouter()
+
+  const handleDisconnect = () => {
+    disconnect()
+    router.push('/')  // Redirect after disconnection
+  }
+
+
+  // Get provided and signer from wagmi
+  
+  const signer = provider.getSigner();
   
   const initializeEERC20Integration = async () => {
     try {
       console.log('🚀️ Initializing eERC20 integration for Motel Smart Wallet...');
 
-      // Get provided and signer from wagmi
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      const signer = provider.getSigner();
-
       // Initialize proof generator
       const pg = new eERC20ZKProofGenerator(provider);
-
-      // Initialize on the server
-      const response = await fetch('/api/eerc20-integrstion', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error( errorData || 'initailization failed');
-      }
-
-      await response.json();
 
       // eERC20 contract interface
       const contractAddress = process.env.NEXT_PUBLIC_EERC20_CONTRACT || '0x...';  // fuli or subnet eERC20 contract address
@@ -144,7 +142,6 @@ const MotelSmartWallet = () => {
     setUserRole(userRole === 'admin' ? 'player' : 'admin');
   };
 
-  // Mock
   const handleCreateWallet = useCallback(async () => {
     setIsCreatingWallet(true);
     try {
@@ -161,12 +158,13 @@ const MotelSmartWallet = () => {
   }, []);
 
    const handleRegisterName = useCallback(async () => {
+    let name: string = '';
+    let duration: number = 0;
     setIsRegisteringName(true);
     try {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
       
-      // Mock name registration success
+      await abWallet.registerNameService(name, duration);
+      
       setHasValidNames(true);
       console.log('Mock name service registered successfully');
     } catch (error) {
@@ -187,7 +185,7 @@ const MotelSmartWallet = () => {
   const TabButton = ({ id, label, icon: Icon, isActive }: TabButtonParams) => (
     <button
      onClick={() => setActiveTab(id)}
-     className={`flex items-center space-x-2 px-4 py-3 rounding-lg transiton-all duration-300
+     className={`flex items-center space-x-2 px-4 py-3 rounded-lg transiton-all duration-300
       ${isActive ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg'
         : 'bg-gray-800 text-grey-300 hover:bg-gray-700'
       }`} >
@@ -237,7 +235,7 @@ const MotelSmartWallet = () => {
       </div>
       <div className="bg-gray-800 rounded-lg p-3 mb-4">
         <div className="flex justify-between text-sm">
-          <span className="text-gray-400">Original Price:</span>
+          <span className="text-gray-400">Discounted amount:</span>
           <span className="text-gray-300"></span>
         </div>
         <div className="flex justify-between text-sm">
@@ -359,8 +357,13 @@ const MotelSmartWallet = () => {
       hasValidNames={hasValidNames}
       onCreateWallet={handleCreateWallet}
       onRegisterName={handleRegisterName}
+
     />
   );
+
+  const renderNameService = () => (
+    <NameService />
+  )
 
   const renderAdmin = () => {
     if (userRole !== 'admin') {
@@ -375,7 +378,7 @@ const MotelSmartWallet = () => {
 
     return (
       <div className="space-y-6">
-        <h2 className="text-xl font-bold text-white mb-2">Admin Dashboard</h2>
+        <h2 className="text-2xl font-bold text-white mb-4">Admin Dashboard</h2>
         <div className="grid grid-cols-1 md:grid-cols3 gap-6">
           <StatCard 
           title="Total Bonds Sale"
@@ -423,7 +426,7 @@ const MotelSmartWallet = () => {
             </button>
           </div>
         </div>
-
+        {/**
         <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 border border-gray-700">
           <h3 className="text-xl font-bold text-white mb-4">Avalanche L1 Integration</h3>
           <div className="bg-gray-800 rounded-lg p-4">
@@ -442,7 +445,7 @@ const MotelSmartWallet = () => {
               </div>
             </div>
           </div>
-        </div>
+        </div> */}
       </div>
     );
   }
@@ -452,6 +455,7 @@ const MotelSmartWallet = () => {
       case 'dashboard': return renderDashboard();
       case 'bonds': return renderBonds();
       case 'wallet': return renderWallet();
+      case 'names': return renderNameService();
       case 'admin': return renderAdmin();
       default: return renderDashboard();
     }
@@ -463,11 +467,10 @@ const MotelSmartWallet = () => {
       <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center py-4">
-          <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg
               flex items-center justify-center">
-                <Shield className="text-white" size={24} />
+                <Image src="/motel_main.png" alt="motel_key logo" width={1000} height={1000}/>
               </div>
               <div>
                 <h1 className="text-xl font-bold">Motel</h1>
@@ -482,6 +485,9 @@ const MotelSmartWallet = () => {
                >
                 {userRole === 'admin' ? 'Switch to Player': 'Switch to Admin'}
                </button> 
+               <div className="px-4 py-2 bg-green-600 rounded-lg">
+                <span className="text-sm font-medium">Connected</span>
+               </div>
                <ConnectButton 
                 accountStatus={{
                   smallScreen: 'avatar',
@@ -493,10 +499,12 @@ const MotelSmartWallet = () => {
                   largeScreen: true,
                 }}
               />
+              <button onClick={handleDisconnect}
+              disabled={!isConnected}>              
+              </button>
             </div>
           </div>
         </div>
-      </div>
       </header>
       
       {/* Navigation */}
@@ -506,6 +514,7 @@ const MotelSmartWallet = () => {
           <TabButton id="dashboard" label="dashboard" icon={TrendingUp} isActive={activeTab === 'dashboard'}/>
           <TabButton id="bonds" label="Bonds" icon={ShoppingCart} isActive={activeTab === 'bonds'} />
           <TabButton id="wallet" label="Wallet" icon={Wallet} isActive={activeTab === 'wallet'} />
+          <TabButton id="names" label="Name Serivce" icon={FileText} isActive={activeTab === "names"}/>
           <TabButton id="admin" label="Admin" icon={Settings} isActive={activeTab === 'admin'} />
           </div>
         </div>
@@ -526,7 +535,7 @@ const MotelSmartWallet = () => {
                 Built on Avalanche L1 • Powered by eERC20 • Secured by Smart Contracts 
               </p>
               <div className="flex items-center space-x-2 text-gray-400">
-                <span>Nerwork:</span>
+                <span>Network:</span>
                 <span className="text-red-400 font-medium">Avalanche Testnet</span>
               </div>
             </div>
