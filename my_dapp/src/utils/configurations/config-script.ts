@@ -1,6 +1,5 @@
 // ERC20 Proof setup Scripts and Interactions Helpers
 
-import { ethers } from "ethers";
 import { execSync } from "child_process";
 import fs from "fs"
 import path from "path"

@@ -10,6 +10,7 @@ import {ABBondNFT} from "./ABBondNFT.sol";
 
 
 contract PrimeContractFactory is Ownable {
+
     using Clones for address;
 
     // Core mappings
@@ -39,6 +40,8 @@ contract PrimeContractFactory is Ownable {
     address public nameServiceContract;
 
     address public eERC20Contract;
+
+    address public tokenAddress;
 
     uint256 public constant WALLET_LIFESPAN = 90 days; // 3 months
 
@@ -204,7 +207,7 @@ contract PrimeContractFactory is Ownable {
     /**
      * @dev Withdraw funds from
      */
-    function withdrawFunds() external onlyEOA walletExists(msg.sender) {
+    function withdrawFunds() external walletExists(msg.sender) {
 
         address wallet = userHoldingWallet[msg.sender];
 
@@ -221,6 +224,31 @@ contract PrimeContractFactory is Ownable {
 
         emit WithdrawalFeeCollected(msg.sender, fee);
     }
+
+    function depositToWallet(address token, uint256 amount) external walletExists(msg.sender) {
+
+        address wallet = userHoldingWallet[msg.sender];
+
+        if (block.timestamp >= walletCreationTime[wallet] + WALLET_LIFESPAN) revert WalletExpired();
+
+        HoldingWallet(wallet).deposit(token, amount);
+    }
+
+    function transferFundsFromHolding(
+        address token, 
+        address to, 
+        uint256 amount
+        ) external walletExists(msg.sender) (
+
+        ) {
+            
+        address wallet = userHoldingWallet[msg.sender];
+
+        if (block.timestamp >= walletCreationTime[wallet] + WALLET_LIFESPAN) revert WalletExpired();
+
+        HoldingWallet(wallet).transferFunds(token, to, amount);
+        
+    } 
 
     /**
      * @dev Collect withdral fees for future token backing
@@ -266,15 +294,18 @@ contract PrimeContractFactory is Ownable {
         activeBonds[bondType] != activeBonds[bondType];
     }
 
+    
     /**
      * @dev Get wallet info for user
      */
     function getWalletInfo(address user) external view returns (
+        
         address wallet,
         uint256 creationTime,
         uint256 timeUnlitExpiry,
         bool isExpired,
-        uint256 bondBalance
+        uint256 bondBalance,
+        uint256 balanece
     ) {
         wallet = userHoldingWallet[user];
         if (wallet != address(0)) {
@@ -283,6 +314,8 @@ contract PrimeContractFactory is Ownable {
             timeUnlitExpiry = block.timestamp >= expiryTime ?  0 : expiryTime - block.timestamp;
             isExpired = block.timestamp >= expiryTime;
             bondBalance = userBondBalance[user];
+            uint256 balance = IERC20(tokenAddress).balanceOf(wallet);
+
         }
     }
 

@@ -8,7 +8,7 @@ import {ReentrancyGuard} from "../lib/openzeppelin-contracts/contracts/utils/Ree
 
 /**
  * @title ABNameService
- * @dev Avax Name Service with eERC20 integration
+ * @dev Avax Name Service 
  * Phase 2: Name registration with privacy features and IPFS backup
  */
 contract ABNameService is Ownable, ReentrancyGuard {
@@ -17,8 +17,6 @@ contract ABNameService is Ownable, ReentrancyGuard {
         address owner_;
         uint256 expiryTime;
         bool isPermanent;
-        string ipfsHash; // Backup metadata on IPFS
-        bool eERC20Eenabled; // Privacy features enabled
     }
  
     struct PricingTier {
@@ -39,8 +37,7 @@ contract ABNameService is Ownable, ReentrancyGuard {
 
     event NameRegistered(address indexed owner, string name, uint256 duration, uint256 cost);
     event NameRenewed(address indexed owner, string name, uint256 newExpiry, uint256 cost);
-    event NameIsExpired(string name, string ipfsBackup);
-    event eERC20AccessGranted(address indexed user, string name);
+    event NameIsExpired(string name);
 
     error NameNotAvailable();
     error NotNameOwner();
@@ -48,7 +45,6 @@ contract ABNameService is Ownable, ReentrancyGuard {
     error InvalidDuration();
     error InsufficientPayment();
     error NameNotFound();
-
 
     modifier onlyNameOwner(string memory name) {
         if (nameRecords[name].owner_ != msg.sender) revert NotNameOwner();
@@ -102,9 +98,7 @@ contract ABNameService is Ownable, ReentrancyGuard {
         nameRecords[name] = NameRecord({
             owner_: msg.sender,
             expiryTime: expiryTime,
-            isPermanent: isPermanent,
-            ipfsHash: "",
-            eERC20Eenabled: false
+            isPermanent: isPermanent
         });
 
         ownerNames[msg.sender].push(name);
@@ -117,17 +111,6 @@ contract ABNameService is Ownable, ReentrancyGuard {
 
         emit NameRegistered(msg.sender, name, duration, cost);
 
-    }
-
-    /**
-     * @dev Enable eERC20 privacy features for name owner
-     */
-    function enableeERC20Access(string memory name) external onlyNameOwner(name) {
-
-        nameRecords[name].eERC20Eenabled = true;
-        eERC20Access[msg.sender] = true;
-
-        emit eERC20AccessGranted(msg.sender, name);
     }
 
     /**
@@ -167,8 +150,7 @@ contract ABNameService is Ownable, ReentrancyGuard {
      * @dev Expire a name and backup to IPFS
      */
     function expireName(
-        string memory name,
-        string memory ipfsHash
+        string memory name   
         ) external {
 
         NameRecord storage record = nameRecords[name];
@@ -176,8 +158,7 @@ contract ABNameService is Ownable, ReentrancyGuard {
         if (record.isPermanent || block.timestamp < record.expiryTime) revert NameNotFound();
 
         // Backup to IPFS before deletion
-        record.ipfsHash = ipfsHash;
-        emit NameIsExpired(name, ipfsHash);
+        emit NameIsExpired(name);
 
         // Clean up on-chain data
         delete nameRecords[name];
@@ -185,14 +166,8 @@ contract ABNameService is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Set eERC contract address
-     */
-    function seteERC20Contract(address _eERC20Contract) external onlyOwner {
-        eERC20Contract = _eERC20Contract;
-    }
-
-    /**
-     * @dev Update Pricing
+     * @dev Update Pricing 
+     * @audit Admin function
      */
     function updatePricing(
         uint256 oneYear, 
@@ -224,7 +199,6 @@ contract ABNameService is Ownable, ReentrancyGuard {
         address _owner,
         uint256 expiryTime,
         bool isPermanent,
-        bool eERC20Enabled,
         bool isExpired
     ) {
         NameRecord memory record = nameRecords[name];
@@ -234,7 +208,6 @@ contract ABNameService is Ownable, ReentrancyGuard {
             record.owner_,
             record.expiryTime,
             record.isPermanent,
-            record.eERC20Eenabled,
             expired
         );
     }
@@ -250,11 +223,10 @@ contract ABNameService is Ownable, ReentrancyGuard {
     function checkNameAvailable(string memory name) external view returns (bool) {
         return _isNameAvailable(name);
     }
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    ////////////////////////////   INTERNAL FUNCTIONS    //////////////////////////////////////////////////////////////////
-    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+    
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////   INTERNAL FUNCTIONS    /////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /**
      * @dev Check if name is available
      */

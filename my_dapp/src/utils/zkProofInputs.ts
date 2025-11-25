@@ -1,8 +1,8 @@
 // Production ZK Proof Implementation for eERC20 Integration
 // Supports Fhenix FHE and other encrypted smart contract platforms
 
-import { babyJub, poseidon, Poseidon } from "@iden3/js-crypto";
-import { buildPedersenHash } from "circomlibjs"
+import { babyJub, poseidon } from "@iden3/js-crypto";
+import { buildBabyjub, buildPedersenHash } from "circomlibjs"
 import { ethers } from "ethers";
 
 //import { CircomWasm, CircomKey } from "@types/snarkjs";
@@ -235,21 +235,17 @@ export class eERC20ZKProofGenerator {
     private babyJubJub: any;
     private pedersen: any;
     private auditorPublicKey: [string, string];
-    private signer: any
 
     constructor(provider: ethers.providers.Provider, auditorPublicKey?: [string, string]) {
         this.provider = provider;
         this.circuitFiles = new Map();
       
-        this.babyJubJub = babyJub;
+        this.babyJubJub = buildBabyjub();
         this.pedersen = buildPedersenHash();
-        this.signer = ethers.Signer
-
-
+    
         // Default auditor publicKey
         this.auditorPublicKey = auditorPublicKey || ["0", "0"];
-    
-        
+            
         // Initialize circuit files
         Object.entries(CIRCUIT_CONFIGS).forEach(([key, config]) => {
             this.circuitFiles.set(key as CircuitType, {
@@ -272,8 +268,6 @@ s     * Generate registration proof for eERC20 system
         if (!circuitFiles) {
             throw new Error('Registration circuit not initialized');
         }
-
-        secretKey = this.signer;
 
         try {
             // Generate or derive secret key
@@ -305,7 +299,7 @@ s     * Generate registration proof for eERC20 system
                 RegistrationHash: registrationHash
             };
 
-            const response = await fetch('/api/registry-proof', {
+            const response = await fetch('/api/generate-proof', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -347,7 +341,6 @@ s     * Generate registration proof for eERC20 system
         if (!circuitFiles) {
             throw new Error('Transfer circuit not initialized');
         }
-        senderPrivateKey = this.signer
         
         try {
             // Validate transfer is possible
@@ -508,7 +501,7 @@ s     * Generate registration proof for eERC20 system
         userEncryptedBalance: EncryptedBalance,
         burnAmount: string
     ): Promise<{ proof: BurnProof; balancePCT: BalancePCT}> {
-        userPrivateKey = this.signer
+        
         try {
             if (BigInt(burnAmount) > BigInt(userBalance)) {
                 throw new Error('Insufficient balance for burn');
@@ -581,7 +574,7 @@ s     * Generate registration proof for eERC20 system
         
         try {
             
-            const receiverPrivateKey = this.signer || await this.generateSecretKey(recipientAddress);
+            const receiverPrivateKey = await this.generateSecretKey(recipientAddress);
             const recipientPublicKey = await this.derivePublicKey(receiverPrivateKey);
 
             const encryptedAmountRandom = this.generateRandomness();
@@ -663,9 +656,12 @@ s     * Generate registration proof for eERC20 system
         address: string,
         chainId: number
     ): Promise<string> {
+        /**
+         * 
         // Initialize Poseidon hasher
         const poseidon =  Poseidon;
 
+         */
         // Convert inputs to BigInt format that Poseidon expects
         const privateKeyBigInt = BigInt(privateKey);
 
@@ -674,11 +670,11 @@ s     * Generate registration proof for eERC20 system
         const chainIdBigInt = BigInt(chainId);
 
         // Poseidon hash the inputs
-        const hash = poseidon.hash([privateKeyBigInt, addressBigInt, chainIdBigInt]);
+        const hash = await this.pedersen.hash([privateKeyBigInt, addressBigInt, chainIdBigInt]);
 
         // Convert hash output to string
         // poseidon.F.toString converts field element to decimal string
-        const hashString = poseidon.F.toString(hash);
+        const hashString = await poseidon.F.toString(hash);
 
         return hashString;
     }
@@ -693,15 +689,15 @@ s     * Generate registration proof for eERC20 system
       
         // Convert private key to buffer 
         // Remove '0x' prefix if present
-        const pkClean = secretKey.replace('0x', '');
+        const pkClean = secretKey.startsWith('0x') ? secretKey.slice(2) : secretKey;
 
         // Generate public key point on Baby Jub Jub curve
         // mulPointEscalar multiplies the base point by the private key
-        const publicKey = this.babyJubJub.mulPointEScalar(babyJub.Base8, BigInt(pkClean));
+        const publicKey = await this.babyJubJub.mulPointEScalar(babyJub.Base8, BigInt(pkClean));
 
         // Extract x and y coordinates and convert to string
-        const pubKeyX = this.babyJubJub.F.toString(publicKey[0]);
-        const pubKeyY = this.babyJubJub.F.toString(publicKey[1]);
+        const pubKeyX = await this.babyJubJub.F.toString(publicKey[0]);
+        const pubKeyY = await this.babyJubJub.F.toString(publicKey[1]);
         
         return {pubKeyX, pubKeyY}
         
@@ -737,21 +733,37 @@ s     * Generate registration proof for eERC20 system
         if (!this.pedersen || !this.babyJubJub) {
             throw new Error('Service not initialized.');
         }
+        const pedersen = await buildPedersenHash();
+        const babyJubJub =  babyJub
 
-        // Convert inputs to buffers for Pedersen hash
+       try {
+         // Convert inputs to buffers for Pedersen hash
         const balanceBigInt = BigInt(balance);
+        console.log("balance:", balanceBigInt);
+
         const randomnessBigInt = BigInt(randomness);
+        console.log("randomness:", randomness);
 
         // Create input array for Pedersen commitment
         // Format: [balance, randomness]
         const balanceBuffer = this.bigIntToBuffer(balanceBigInt);
+        console.log("balanceBuffer check", balanceBuffer);
+
         const randomnessBuffer = this.bigIntToBuffer(randomnessBigInt);
+        console.log("randomnessBigInt check:" ,randomnessBigInt);
 
         const combined = Buffer.concat([balanceBuffer, randomnessBuffer]);
+        console.log("combined check", combined);
 
         // Generate base Pedersen hash
-        const hash = this.pedersen.hash(combined);
-        const baseCommitment: string = this.babyJubJub.F.toString(hash);
+        const hash = pedersen.hash(combined);
+        console.log("hash check:", hash);
+
+        const baseCommitmentBigInt: bigint =  babyJubJub.F.fromRprBE(hash, 0);
+        console.log("baseCommitmentBigInt check:", baseCommitmentBigInt);
+
+        const baseCommitment: string = babyJubJub.F.toString(baseCommitmentBigInt);
+        console.log("baseCommitment check:", baseCommitment);
 
         // Generate 7 commitments for homomorphic operation
         // Each commitment is derived from the base using different offsets
@@ -764,8 +776,13 @@ s     * Generate registration proof for eERC20 system
             this.deriveCommitment(baseCommitment, 5),
             this.deriveCommitment(baseCommitment, 6),
         ];
+        console.log("commitment for pct:", pct);
 
         return pct;
+       } catch (error: any) {
+        console.error('failed to generate Balance pedersen commitment', error.message);
+        throw new Error('failed to commit', error);
+       }
     }
 
     /**
@@ -807,38 +824,38 @@ s     * Generate registration proof for eERC20 system
 
         // Step 2: Calculate C1 = r * G
         // This is the "ephemeral public key" - anyone can see this
-        const C1 = this.babyJubJub.mulPointEScalar(this.babyJubJub.Base8, rBuffer);
+        const C1 = await this.babyJubJub.mulPointEScalar(this.babyJubJub.Base8, rBuffer);
 
         // Step3: Reconstruct recipient's public key as a curve on point
         const recipientPublicKey = [
-            this.babyJubJub.F.e(BigInt(publicKey.x)),
-            this.babyJubJub.F.e(BigInt(publicKey.y))
+            await this.babyJubJub.F.e(BigInt(publicKey.x)),
+            await this.babyJubJub.F.e(BigInt(publicKey.y))
         ];
 
         // Step 4: Calculate shared secret: r * PK
         // This is the "encryption mask" - only the recipient can compute this
         // because only they know sk where PK = sk * G
-        const sharedSecret = this.babyJubJub.mulPointEScalar(recipientPublicKey, rBuffer);
+        const sharedSecret = await this.babyJubJub.mulPointEScalar(recipientPublicKey, rBuffer);
 
         // Step 5: Encode the message as a curve point: m * G
         const valueToBigInt = BigInt(value);
         const valueBuffer = this.bigIntToBuffer(valueToBigInt);
-        const messagePoint = this.babyJubJub.mulPointEScalar(this.babyJubJub.Base8, valueBuffer);
+        const messagePoint = await this.babyJubJub.mulPointEScalar(this.babyJubJub.Base8, valueBuffer);
 
         // Step 6: Calculate C2 = (m * G) + (r * PK)
         // This "hides" the message by adding the shared secret
-        const C2 = this.babyJubJub.addPoint(messagePoint, sharedSecret);
+        const C2 = await this.babyJubJub.addPoint(messagePoint, sharedSecret);
 
         // Step 7: Extract x, y coordinates and return as string
         return {
             C1: [
-                this.babyJubJub.F.toString(C1[0]), // C1.x
-                this.babyJubJub.F.toString(C1[1]) // C1.y
+                await this.babyJubJub.F.toString(C1[0]), // C1.x
+                await this.babyJubJub.F.toString(C1[1]) // C1.y
             ],
 
             C2: [
-                this.babyJubJub.F.toString(C2[0]), // C2.x
-                this.babyJubJub.F.toString(C1[1]) // C2.y
+                await this.babyJubJub.F.toString(C2[0]), // C2.x
+                await this.babyJubJub.F.toString(C1[1]) // C2.y
             ]
         };
     }
@@ -957,9 +974,6 @@ s     * Generate registration proof for eERC20 system
         return (BigInt(address) % fieldSize).toString();
     }
 
-
-
-
     private formatRegisterProof(proof: any, publicSignals: string[]): RegisterProof {
         return {
             proofPoints: {
@@ -1049,6 +1063,19 @@ export class eERC20ContractInterface {
     ) {
         this.contract = new ethers.Contract(contractAddress, abi, signer);
         this.proofGenerator = proofGenerator;
+
+         const requiredMethods = ['deposit', 'transfer', 'withdraw', 'register'];
+         const availableMethods = Object.keys(this.contract.functions);
+         
+        console.log('Available contract methods:', availableMethods);
+            
+        requiredMethods.forEach(method => {
+                if (!this.contract[method]) {
+                    console.error(`Missing method: ${method}`);
+                    throw new Error(`Contract ABI missing required method: ${method}`);
+                }
+        });
+
     }
 
     /**
@@ -1133,18 +1160,41 @@ export class eERC20ContractInterface {
         }
     }
 
-    async deposit(
+    public async deposit(
         amount: string,
         tokenAddress: string,
         amountPCT: BalancePCT,
         message?: string
     ): Promise<ethers.ContractTransaction> {
         try {
+            // Additional Runtime Validation
+            if (!this.contract.deposit) {
+                throw new Error('Deposit method is undefined at runtime');
+            }
+
+            // Logging Input Parameters
+            console.log('<b>Deposit Method Input</b>', {
+                amount,
+                tokenAddress,
+                amountPCTLength: amountPCT.length,
+                message: message || 'No message'
+            });
+
             if (message) {
-                return await this.contract.deposit(amount, tokenAddress, amountPCT, ethers.utils.toUtf8Bytes(message));
+                return await this.contract.deposit(
+                    amount,
+                    tokenAddress,
+                    amountPCT,
+                    ethers.utils.toUtf8Bytes(message)
+                );
             }
             return await this.contract.deposit(amount, tokenAddress, amountPCT);
         } catch (error: any) {
+            console.error('<b>Deposit Error Details:</b>', {
+                errorMessage: error.message,
+                errorStack: error.stack,
+                contractAddress: this.contract.address
+            });
             throw new Error(`Deposit failed: ${error.message}`);
         }
     }

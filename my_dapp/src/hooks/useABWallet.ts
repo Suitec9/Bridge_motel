@@ -1,20 +1,34 @@
 
 import { useState, useEffect, useCallback } from "react";
-import { ethers, Contract } from "ethers";
+import { ethers, Contract, utils } from "ethers";
 import { BOND_NFT_ABI } from "../../constants/ABBondNFT";
 import { NAME_SERVICE_ABI } from "../../constants/ABNameService";
 import { FACTORY_ABI, CONTRACT_ADDRESSES } from "../../constants/PrimeFactory";
+import { localConfig } from "./config/bridge_Networkish";
+import { useAccount } from "wagmi";
 
 // Types
-interface WalletInfo {
+export interface WalletInfo {
   walletAddress: string;
   creationTime: number;
   timeUntilExpiry: number;
   isExpired: boolean;
   bondBalance: number;
+  walletBalance: string;
 }
 
-interface Contracts {
+interface NameInfoCollector {
+  owner: string;
+  expirytime: number;
+  isPermanent: boolean;
+  isExpired: boolean;
+}
+
+interface UserNames {
+  allNames: []
+}
+
+interface Contracts_motel {
   factory: Contract;
   nameService: Contract;
   bondNFT: Contract;
@@ -35,7 +49,7 @@ interface NameRegistrationResult {
   tx1: ethers.ContractTransaction;
 }
 
-interface DepositResult {
+export interface DepositResult {
   tx1: ethers.ContractTransaction;
 }
 
@@ -45,25 +59,25 @@ interface WithdrawResult {
 
 interface TransferResult {
   tx1: ethers.ContractTransaction;
-  balance: ethers.BigNumber;
-  timeUntilExpiry: ethers.BigNumber;
-  isExpired: boolean;
 }
 
 interface ConnectionResult {
-  provider: ethers.providers.Web3Provider;
+  provider: ethers.providers.JsonRpcProvider;
   signer: ethers.Signer;
   account: string;
 }
 
 export const useABWallet = () => {
-  const [provider, setProvider] = useState<ethers.providers.Web3Provider | null>(null);
+  const [provider, setProvider] = useState<ethers.providers.JsonRpcProvider | null>(null);
   const [signer, setSigner] = useState<ethers.Signer | null>(null);
   const [account, setAccount] = useState<string | null>(null);
-  const [contracts, setContracts] = useState<Contracts | null>(null);
+  const [contracts, setContracts] = useState<Contracts_motel>();
   const [walletInfo, setWalletInfo] = useState<WalletInfo | null>(null);
+  const [nameInfo, setNameInfo] = useState<NameInfoCollector | null>(null);
+  const [userNames, setUserName] = useState<UserNames | null>(null);
   const [events, setEvents] = useState<WalletEvent[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const { address } = useAccount();
 
   // Initialize Web3 Connection
   const connectWallet = useCallback(async (): Promise<ConnectionResult> => {
@@ -72,7 +86,7 @@ export const useABWallet = () => {
         throw new Error("MetaMask not found");
       }
 
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const provider =new ethers.providers.JsonRpcProvider(localConfig.rpcUrl);// new ethers.providers.Web3Provider(window.ethereum);
       const accounts = await provider.send("eth_requestAccounts", []);
       const signer = provider.getSigner();
 
@@ -87,30 +101,83 @@ export const useABWallet = () => {
         signer
       );
 
+      console.log("check factory contract", factoryContract);
+
       const nameServiceContract = new ethers.Contract(
         CONTRACT_ADDRESSES.NAME_SERVICE,
         NAME_SERVICE_ABI,
         signer
       );
+      console.log("check nameServiceContact:", nameServiceContract);
 
       const bondNFTContract = new ethers.Contract(
         CONTRACT_ADDRESSES.BOND_NFT,
         BOND_NFT_ABI,
         signer
       );
+      console.log("check bond contract:", bondNFTContract);
 
       setContracts({
         factory: factoryContract,
         nameService: nameServiceContract,
         bondNFT: bondNFTContract
       });
-
+      
       return { provider, signer, account: accounts[0] };
     } catch (error) {
       console.error("Wallet connection failed:", error);
       throw error;
     }
   }, []);
+
+
+  // Fetch wallet information
+  const fetchWalletInfo = useCallback(async (): Promise<any> => {
+    if (!contracts?.factory || !account) return;
+    
+
+    try {/**
+
+      const walletAddress_Onchain: string = await contracts.factory.userHoldingWallet(account);
+      console.log("wallet address check:", walletAddress_Onchain);
+
+      if (walletAddress_Onchain === '0x0000000000000000000000000000000000000000') {
+        console.warn('No wallet found for this user');
+        setWalletInfo(null);
+        return;
+      }
+       */
+      const factoryAddre = CONTRACT_ADDRESSES.FACTORY;
+      //const code_Facory = await provider?.getCode("getWalletInfo(address)", factoryAddre);
+      //console.log("code of factory", code_Facory);
+      const gasCheck = provider?.estimateGas({gasLimit: 30000000, 
+        data: "0x7d5c1914000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266", 
+        to: factoryAddre, gasPrice: 50000, nonce: provider.getTransactionCount(account)});
+        
+      console.log("gas check",await gasCheck );
+      
+      const info = await contracts?.factory.getWalletInfo(account);
+      await info.wait();
+
+       setWalletInfo({
+        walletAddress: info[0],
+        creationTime: info[1].toNumber(),
+        timeUntilExpiry: info[2].toNumber(),
+        isExpired: info[3],
+        bondBalance: info[4].toNumber(),
+        walletBalance: info[5].toNumber()
+      });
+      
+    } catch (error) {
+      console.error("Failed to fetch wallet info:", error);
+    }
+  }, [contracts?.factory, account]);
+
+  // Memoize to prevent unnecessary re-renders
+  const memoizedFetchWalletInfo = useCallback(
+    () => fetchWalletInfo(), 
+    [fetchWalletInfo]
+  );
 
   // Create AB wallet
   const createWallet = useCallback(async (): Promise<ethers.ContractTransaction> => {
@@ -121,10 +188,11 @@ export const useABWallet = () => {
     try {
       setLoading(true);
       const tx = await contracts.factory.createHoldingWallet();
+      console.log("creating holding wallet:", tx);
       await tx.wait();
 
       // Refresh wallet info
-      await fetchWalletInfo();
+      await memoizedFetchWalletInfo();
 
       return tx;
     } catch (error) {
@@ -133,7 +201,7 @@ export const useABWallet = () => {
     } finally {
       setLoading(false);
     }
-  }, [contracts?.factory]);
+  }, [contracts?.factory, fetchWalletInfo]);
 
   // Register name service with eERC20
   const registerNameService = useCallback(async (
@@ -178,11 +246,24 @@ export const useABWallet = () => {
     if (!contracts || !account) {
       throw new Error('account not connected or wallet does not exsit');
     }
+    const provider =new ethers.providers.JsonRpcProvider(localConfig.rpcUrl);
+    
+    const abiIERC20 = new ethers.utils.Interface([
+      "function approve(address spender, uint256 value)  returns (bool)",
+      'function decimals() view returns (uint8)'
+    ]);
+    const IERC20_instance = new ethers.Contract(tokenAddress, abiIERC20, provider.getSigner());
+    
 
     setLoading(true);
     try {
-     const tx = await contracts.factory.depositFundsToWallet(tokenAddress, amount);
-     await tx.wait();
+      const tokenDecimal = await IERC20_instance.decimals();
+      console.log("decimals for tokens", tokenDecimal);
+      const bigN = ethers.utils.parseUnits(amount.toString(), tokenDecimal);
+
+      console.log("approve the factory to spend funds", await IERC20_instance.approve(CONTRACT_ADDRESSES.FACTORY, bigN));
+      const tx = await contracts?.factory.depositFundsERC20(tokenAddress, bigN );
+      await tx.wait();
      
      return tx;
     
@@ -193,7 +274,7 @@ export const useABWallet = () => {
       setLoading(false);
     }
     
-  }, [contracts?.factory, account]);
+  }, [ account, contracts]);
   
   const transfer = useCallback(async (
     tokenAddress: string,
@@ -207,7 +288,7 @@ export const useABWallet = () => {
     try {
       setLoading(true);
 
-      const tx = await contracts.factory.transferFundsFromHolding(
+      const tx = await contracts.factory.transferFunds(
         tokenAddress, 
         recipient, 
         ethers.utils.formatEther(amount)
@@ -215,9 +296,10 @@ export const useABWallet = () => {
 
       await tx.wait()
 
-      return {tx1: tx.ContractTransaction, balance: tx.balance, timeUntilExpiry: tx.timeUntilExpiry, isExpired: tx.isExpired}
+      return  tx.ContractTransaction
     } catch (error: any) {
-      throw error;
+      console.error('failed to transfer', error);
+      throw new Error('failed to transfer');
     } finally {
       setLoading(false);
     }
@@ -241,6 +323,187 @@ export const useABWallet = () => {
       setLoading(false);
     }
   }, [contracts?.factory, account]);
+
+  const checkNamesAvailability = useCallback(async (
+    name: string
+  ): Promise<any> => {
+    
+    setLoading(true);
+    
+    try {
+      const tx = await contracts?.nameService.checkNameAvailable(name);
+
+      await tx.wait();
+
+      return tx.ContractTransaction;
+
+    } catch (error: any) {
+      console.error('failed to check name availibity', error);
+      throw new Error('failed to check name', error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [contracts?.nameService]);
+
+  const getNameInfo = useCallback(async (
+    names: string
+  ): Promise<any> => {
+
+    setLoading(true);
+
+    try {
+      const collectInfoName = await contracts?.nameService.getNameInfo(names);
+      setNameInfo({
+        owner: collectInfoName[0],
+        expirytime: collectInfoName[1].toNumber(),
+        isPermanent: collectInfoName[2],
+        isExpired: collectInfoName[3],
+      });      
+    } catch (error) {
+      console.error('failed to collect name info', error);
+      throw new Error('failed to get info');
+    } finally {
+      setLoading(false);
+    }
+  }, [contracts?.nameService]);
+
+  const displayBondBalance = useCallback(async (
+    address: string
+  ): Promise<any> => {
+
+    setLoading(true)
+
+    try {
+      const tx = await contracts?.factory.userBondBalance(address);
+
+      await tx.wait();
+
+      return tx.ContractTransaction;
+    } catch (error: any) {
+      throw error;
+    } finally {
+      setLoading(false)
+    }
+
+  }, [contracts?.factory]);
+
+  const getUserNames = useCallback(async (
+    names: string
+  ):Promise<any> => {
+    
+    setLoading(true);
+
+    try {
+      const tx = await contracts?.nameService.getUserNames(names);
+
+      setUserName({
+        allNames: tx.name[0].toString()
+      });
+
+    } catch (error: any) {
+      console.error('failed to get user names', error.message);
+      throw new Error('failed to get user names or user has no names');
+    } finally {
+      setLoading(false);
+    }
+  }, [contracts?.nameService]);
+
+  const renewName = useCallback(async (
+    names: string,
+    duration: number
+  ): Promise<any> => {
+
+    setLoading(true);
+
+    try {
+      const tx = await contracts?.nameService.renewName(names, duration);
+
+      await tx.wait();
+
+      return tx.ContractTransaction
+    } catch (error: any) {
+      console.error('failed to renew name', error.message);
+      throw new Error('failed to new name');
+    }
+  }, [contracts?.nameService]);
+
+  const expireName = useCallback(async (
+    names: string
+  ): Promise<any> => {
+
+    setLoading(true);
+
+    try {
+      const tx = await contracts?.nameService.expireName(names);
+
+      await tx.wait();
+    } catch (error: any) {
+      console.error('failed to expire name', error.message);
+      throw new Error('failed or name hasnt expired yet');
+    } finally {
+      setLoading(false);
+    }
+  }, [contracts?.nameService]);
+
+  const updateNameServicePrices = useCallback(async (
+    oneYear: ethers.BigNumber,
+    threeYears: ethers.BigNumber,
+    permanent: ethers.BigNumber
+  ):Promise<any> => {
+
+    setLoading(true);
+
+    try {
+      const tx = await contracts?.nameService.updatePricing(oneYear, threeYears, permanent);
+
+      await tx.wait()
+
+      return tx.ContractTransaction;
+    } catch (error: any) {
+      console.error('failed to update price', error.message);
+      throw new Error("failed to update prices");
+    } finally {
+      setLoading(false);
+    }
+  }, [contracts?.nameService]);
+
+  const withdrawNameServicesFee = useCallback(async () => {
+
+    setLoading(true);
+
+    try {
+      const tx = await contracts?.nameService.withdrawRevenue();
+
+      await tx.wait();
+    } catch (error: any) {
+      console.error('failed to withdraw revenue fees', error.message);
+      throw new Error('failed to transfer', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [contracts?.nameService]);
+
+  const userHasValidNames = useCallback(async (address: string): Promise<boolean> => {
+    if (!contracts?.factory || !contracts.nameService || !account) {
+      throw new Error("intiate contracts or connect account");
+    }
+
+    try {
+      const tx = await contracts.factory.hasValidNames(address);
+
+      await tx.wait();
+
+      return true;
+    } catch (error: any){
+      console.error("name validation failed", error);
+      
+      throw new Error("account didn't match name:", error.message)
+      
+    } finally {
+      setLoading(false);
+      return false
+    }
+  }, [contracts?.factory, contracts?.nameService, account]);
 
   const purchaseBonds = useCallback(async (
     bondType: number, 
@@ -328,24 +591,6 @@ export const useABWallet = () => {
       setLoading(false);
     }
   }, [contracts?.bondNFT, account]);
-
-  // Fetch wallet information
-  const fetchWalletInfo = useCallback(async (): Promise<void> => {
-    if (!contracts?.factory || !account) return;
-
-    try {
-      const info = await contracts.factory.getWalletInfo(account);
-      setWalletInfo({
-        walletAddress: info[0],
-        creationTime: info[1].toNumber(),
-        timeUntilExpiry: info[2].toNumber(),
-        isExpired: info[3],
-        bondBalance: info[4].toNumber()
-      });
-    } catch (error) {
-      console.error("Failed to fetch wallet info:", error);
-    }
-  }, [contracts?.factory, account]);
 
   // Event Listeners 
   useEffect(() => {
@@ -475,19 +720,32 @@ export const useABWallet = () => {
     // State
     account,
     provider, 
+    signer,
     walletInfo,
+    nameInfo,
+    userNames,
     events,
     loading,
     contracts,
 
     // Actions
     connectWallet,
+    memoizedFetchWalletInfo,
+    userHasValidNames,
     createWallet,
     deposit,
     transfer,
     withdraw,
+    checkNamesAvailability,
     registerNameService,
+    renewName,
+    expireName,
+    updateNameServicePrices,
+    withdrawNameServicesFee,
+    getUserNames,
+    getNameInfo,
     purchaseBonds,
+    displayBondBalance,
     sendBondsToPlayer,
     fetchWalletInfo
   };

@@ -11,11 +11,11 @@ export const config = getDefaultConfig({
 */
 
 import { createConfig, http } from 'wagmi';
-import { avalanche, avalancheFuji } from 'wagmi/chains';
+import { avalanche, avalancheFuji, polygonAmoy, anvil, sepolia } from 'wagmi/chains';
 import { coinbaseWallet, injected, walletConnect } from 'wagmi/connectors';
 
 export const config = createConfig({
-  chains: [avalanche, avalancheFuji],
+  chains: [avalanche, avalancheFuji, polygonAmoy, anvil, sepolia],
   connectors: [
     injected(),
     coinbaseWallet({ appName: 'AB Smart Wallet' }),
@@ -26,5 +26,8 @@ export const config = createConfig({
   transports: {
     [avalanche.id]: http(),
     [avalancheFuji.id]: http(),
+    [polygonAmoy.id]: http(),
+    [anvil.id]:http(),
+    [sepolia.id]:http()
   },
 });

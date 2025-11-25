@@ -21,33 +21,29 @@ import {
 import { EnhancedWallet } from "@/components/EnhancedWallet";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useBalance, useCall, useDisconnect } from "wagmi";
-import { avalanche, avalancheFuji } from "viem/chains";
+import { anvil, avalanche, avalancheFuji, polygonAmoy, sepolia } from "viem/chains";
 import { formatEther } from "viem";
 import { eERC20ContractInterface, eERC20ZKProofGenerator } from "@/utils/zkProofInputs";
 import { ethers, providers } from "ethers";
 import { useABWallet } from "@/hooks/useABWallet";
-import { provider } from "../hooks/config/configs";
-import { geteERC20ABI } from "../../constants/eerc20ContractABI";
+import { CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, provider } from "../hooks/config/configs";
+
 import { useRouter } from "next/navigation";
 import { NameService } from "@/components/NameServiceComponent";
 import  Image  from "next/image";
+import { localConfig } from "@/hooks/config/bridge_Networkish";
 interface EnhancedWalletProps {
   balance: any;
-  userHoldingWallet: string;
+  userHoldingWallet: string | undefined;
   hasValidNames: boolean;
 }
 
 const MotelSmartWallet = () => {
 
   const [ activeTab, setActiveTab ] = useState('dashBoard');
-  //const [ isConnected, setIsConnected ] = useState(false);
   const [ userRole, setUserRole ] = useState('player'); // 'admin' or 'player'
   
-  const [userHoldingWallet, setUserHoldingWallet] = useState<string | null>('');
-  const [hasValidNames, setHasValidNames] = useState(false);
-  const [isCreatingWallet, setIsCreatingWallet] = useState(false);
-  const [isRegisteringName, setIsRegisteringName] = useState(false);
-   const abWallet = useABWallet();
+  const abWallet = useABWallet();
 
   // eERC20 specific state
   const [eERC20System, setEERC20System] = useState<{
@@ -74,11 +70,16 @@ const MotelSmartWallet = () => {
 
   const { address, isConnected, chain} = useAccount();
   const { disconnect } = useDisconnect();
-  const { data: avaxBalance } = useBalance({
+  const { data: avaxBalance, data: sepoliaBalance, data: polygonAmoyMatic, data: anvilEthBalance } = useBalance({
     address,
-    chainId: chain?.id || avalancheFuji.id
+    chainId: chain?.id || avalancheFuji.id || polygonAmoy.id || sepolia.id || anvil.id 
   });
-  
+
+  const [ethBalance, setEthBalance] = useState<EnhancedWalletProps>({
+    balance: {sepoliaBalance, polygonAmoyMatic, anvilEthBalance},
+    userHoldingWallet: abWallet.walletInfo?.walletAddress,
+    hasValidNames: false
+  })
 
   const [ balance, setBalance ] = useState({
     avax: avaxBalance, 
@@ -91,38 +92,27 @@ const MotelSmartWallet = () => {
   // eERC20 SYSTEN INITIALIZATION
   // =====================================
 
-
-  useEffect(() => {
-    
-    initializeEERC20Integration();
-    
-  }, []);
-   
-  const router = useRouter()
-
-  const handleDisconnect = () => {
-    disconnect()
-    router.push('/')  // Redirect after disconnection
-  }
-
-
   // Get provided and signer from wagmi
   
   const signer = provider.getSigner();
   
-  const initializeEERC20Integration = async () => {
+  const initializeEERC20Integration = useCallback(async () => {
     try {
       console.log('🚀️ Initializing eERC20 integration for Motel Smart Wallet...');
 
       // Initialize proof generator
-      const pg = new eERC20ZKProofGenerator(provider);
+      
+      const pg = new eERC20ZKProofGenerator(provider, ['0','0']);
+      console.log("initialize generator", pg);
+
+      const connectToWallet = await abWallet.connectWallet();
+      console.log("initailization of abWallet hook", connectToWallet);
 
       // eERC20 contract interface
-      const contractAddress = process.env.NEXT_PUBLIC_EERC20_CONTRACT || '0x...';  // fuli or subnet eERC20 contract address
+      const contractAddress = CONTRACTS_ERC20;//process.env.NEXT_PUBLIC_EERC20_CONTRACT;  // fuli or subnet eERC20 contract address
 
-      const abi = geteERC20ABI()
-
-      const ci = new eERC20ContractInterface(contractAddress, abi, signer, pg);
+      const ci = new eERC20ContractInterface(contractAddress, ENCRYPTED_ERC_ABI, signer, pg);
+      console.log("eERC20 contract initialize", ci);
 
       setEERC20System({
         proofGenerator: pg,
@@ -136,51 +126,40 @@ const MotelSmartWallet = () => {
       // Don't block the app if fails - show warning but continue
       console.warn('Continuing without eERC20 features');
     }
+  }, [signer]);
+
+  /**
+   *   const handlePurchaseBond = useCallback( async() => {
+    try {
+      abWallet.purchaseBonds()
+    }
+  })
+
+   */
+  useEffect(() => {
+    
+    initializeEERC20Integration();
+    
+  }, []);
+   
+  const router = useRouter();
+
+  const handleDisconnect = () => {
+    disconnect()
+    router.push('/')  // Redirect after disconnection
   }
 
   const switchRole = () => {
+    const admin = "0x001";
+    if (!admin) return; 
     setUserRole(userRole === 'admin' ? 'player' : 'admin');
   };
-
-  const handleCreateWallet = useCallback(async () => {
-    setIsCreatingWallet(true);
-    try {
-        
-      await abWallet.createWallet()
-      // k wallet creation success
-      setUserHoldingWallet(abWallet.account);
-      console.log('holding wallet created successfully');
-    } catch (error) {
-      console.error('Failed to create holding wallet:', error);
-    } finally {
-      setIsCreatingWallet(false);
-    }
-  }, []);
-
-   const handleRegisterName = useCallback(async () => {
-    let name: string = '';
-    let duration: number = 0;
-    setIsRegisteringName(true);
-    try {
-      
-      await abWallet.registerNameService(name, duration);
-      
-      setHasValidNames(true);
-      console.log('Mock name service registered successfully');
-    } catch (error) {
-      console.error('Failed to register name:', error);
-    } finally {
-      setIsRegisteringName(false);
-    }
-  }, []);
-
   interface TabButtonParams {
     id: any,
     label: any,
     icon: any,
     isActive: boolean
   }
-
 
   const TabButton = ({ id, label, icon: Icon, isActive }: TabButtonParams) => (
     <button
@@ -255,8 +234,8 @@ const MotelSmartWallet = () => {
       <div className="grid grid-cols-1 mb:grid-cols-3 gap-6">
         <StatCard
         title="AVAX balance"
-        value={avaxBalance ? `${parseFloat(formatEther(avaxBalance.value)).toFixed(4)} AVAX` : '0 AVAX' }
-        subtitle={avaxBalance ? `~$${(parseFloat(formatEther(avaxBalance.value)) * 25).toFixed(2)} USD` : 'Connect wallet'}
+        value={avaxBalance ? `${parseFloat(formatEther(avaxBalance.value | polygonAmoyMatic.value | sepoliaBalance.value | anvilEthBalance.value)).toFixed(4)} AVAX` : '0 AVAX' }
+        subtitle={avaxBalance ? `~$${(parseFloat(formatEther(avaxBalance.value | polygonAmoyMatic.value | sepoliaBalance.value | anvilEthBalance.value)) * 25).toFixed(2)} USD` : 'Connect wallet'}
         icon={DollarSign}
         color="blue"
         />
@@ -353,11 +332,7 @@ const MotelSmartWallet = () => {
   const renderWallet = () => (
     <EnhancedWallet
       balance={balance}
-      userHoldingWallet={userHoldingWallet}
-      hasValidNames={hasValidNames}
-      onCreateWallet={handleCreateWallet}
-      onRegisterName={handleRegisterName}
-
+      
     />
   );
 
@@ -470,7 +445,7 @@ const MotelSmartWallet = () => {
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg
               flex items-center justify-center">
-                <Image src="/motel_main.png" alt="motel_key logo" width={1000} height={1000}/>
+                <Image src="/motel_main.png" alt="motel_key logo" className="rounded-sm" width={100} height={100}/>
               </div>
               <div>
                 <h1 className="text-xl font-bold">Motel</h1>
@@ -485,9 +460,20 @@ const MotelSmartWallet = () => {
                >
                 {userRole === 'admin' ? 'Switch to Player': 'Switch to Admin'}
                </button> 
+               {/**
+                * {isConnected && (
                <div className="px-4 py-2 bg-green-600 rounded-lg">
                 <span className="text-sm font-medium">Connected</span>
                </div>
+               )}
+
+               {!isConnected && (
+                <div className="px-4 py-2 bg-red-600 rounded-lg">
+                <span className="text-sm font-medium">Connect</span>
+               </div>
+               )}
+                */}
+                
                <ConnectButton 
                 accountStatus={{
                   smallScreen: 'avatar',
@@ -502,6 +488,9 @@ const MotelSmartWallet = () => {
               <button onClick={handleDisconnect}
               disabled={!isConnected}>              
               </button>
+              <div className="px-4 py-2 bg-green-600 rounded-lg">
+                <span className="text-sm font-medium">Connected</span>
+               </div>
             </div>
           </div>
         </div>
@@ -536,7 +525,7 @@ const MotelSmartWallet = () => {
               </p>
               <div className="flex items-center space-x-2 text-gray-400">
                 <span>Network:</span>
-                <span className="text-red-400 font-medium">Avalanche Testnet</span>
+                <span className="text-red-400 font-medium">{chain?.name}</span>
               </div>
             </div>
           </div>

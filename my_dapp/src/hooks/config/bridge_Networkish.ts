@@ -1,4 +1,5 @@
 import  Networkish  from "@ethersproject/networks/lib/types";
+import { ethers } from "ethers";
 
 interface Networkish {
     name: string;
@@ -29,3 +30,25 @@ export const fuji_Ava: Networkish = {
     chainId: 43113,
     rpcUrl: 'https://api.avax-test.network/ext/bc/C/rpc'
 }
+
+export const Avalanche_mainnet: Networkish = {
+    name: 'Avalanche',
+    chainId: 41337,
+    rpcUrl: 'https://api.avax-snowtrace.network/ext/bc/C/rpc'
+}
+
+
+// Async function to check contract code length
+export async function hasZeroCodeLength(address: string, provider: ethers.providers.Provider) {
+  try {
+    const code = await provider.getCode(address);
+    return code.length === 2; // "0x" is length 2 for empty contract
+  } catch (error) {
+    console.error("Error checking contract code:", error);
+    return false;
+  }
+
+}
+
+
+

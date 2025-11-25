@@ -50,9 +50,12 @@ contract HoldingWallet {
     /**
      * @dev Transfer funds between wallets
      */
-    function transferFunds(address token, address to, uint256 amount) external onlyOwner onlyBeforeExpire {
+    function transferFunds(address token, address to, uint256 amount) external onlyFactory onlyBeforeExpire {
         require(address(this).balance >= amount, "Insufficient amount");
+        require(amount >= uint256(200), "transfer is below minimum");
         require(token != address(0), "zero address");
+        require(to != address(this), "invalid transfer");
+    
 
         uint fee = (amount * 150) / 10000;
         uint256 netAmount = amount - fee;
@@ -61,9 +64,9 @@ contract HoldingWallet {
 
         require(success, "fee failed");
 
+        payable(factory).transfer(fee);
+
         payable(to).transfer(netAmount);
-
-
     }
     
     /**
@@ -80,9 +83,9 @@ contract HoldingWallet {
         
     }
 
-       function deposit(address token, uint256 amount) external onlyBeforeExpire returns (bool) {
+    function deposit(address token, uint256 amount) external onlyFactory onlyBeforeExpire returns (bool) {
         require(token != address(0), 'zero address');
-        require(amount > uint256(1), 'insufficient amount');
+        require(amount > uint256(10), 'insufficient amount');
 
         uint256 balance = uint256(address(this).balance);
         balance += amount;
@@ -99,7 +102,7 @@ contract HoldingWallet {
     /**
      * @dev Emergency destruct for expired wallets (callable by anyone)
      */
-    function emergencyDestruct() external {
+    function emergencyDestruct() external onlyFactory {
         require(block.timestamp >= creationTime + 90 days, "Not expired");
 
         // Return funds to owner before destroying

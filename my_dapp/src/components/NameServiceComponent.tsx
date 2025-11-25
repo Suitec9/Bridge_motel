@@ -1,12 +1,30 @@
 import { useABWallet } from "@/hooks/useABWallet";
 import { FileText } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 export const NameService = () => {
     const [nameSearch, setNameSearch] = useState<string>('');
     const [nameToRegister, setNameToRegister] = useState<string>('');
     const [nameInfo, setNameInfo] = useState(null);
     const [userNames, setUserNames] = useState(['motel.avax', 'gamer123.avax']);
+    const [isRegisteringName, setIsRegisteringName] = useState(false);
+    
+    const abWallet = useABWallet();
+    
+    const handleRegisterName = useCallback(async () => {
+        let name: string = '';
+        let duration: number = 0;
+        setIsRegisteringName(true);
+        
+        try {
+            await abWallet.registerNameService(name, duration);
+            console.log('Mock name service registered successfully');
+        } catch (error) {
+            console.error('Failed to register name:', error);
+        } finally {
+            setIsRegisteringName(false);
+        }
+    }, [abWallet]);
 
     return (
         <div className="space-y-6">
@@ -35,7 +53,7 @@ export const NameService = () => {
                     rounded border border-gray-600 
                     focus:border-purple-500 focus:outline-none placeholder-gray-400"
                     />
-                    <button 
+                    <button onClick={handleRegisterName}
                      className="w-full bg-gradient-to-r 
                      from-purple-600 to-indigo-600 hover:from-purple-700
                      hover:to-indigo-700 text-white py-3 px-4 rounded-lg

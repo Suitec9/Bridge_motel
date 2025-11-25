@@ -42,7 +42,8 @@ contract ABBondNFT is ERC1155, ERC1155Supply, Ownable, ReentrancyGuard {
         _;
     }
 
-    constructor(address _factoryContract) ERC1155("https:// api.absmartwallets.com/bonds/{id}.json") Ownable(msg.sender) {
+    constructor(address _factoryContract) 
+    ERC1155("https:// api.abMotelsmartwallets.com/bonds/{id}.json") Ownable(msg.sender) {
         factoryContract = _factoryContract;
 
         // Initialize default bond types for testnet

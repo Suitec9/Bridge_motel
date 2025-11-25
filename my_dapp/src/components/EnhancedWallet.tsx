@@ -1,5 +1,4 @@
 
-
 import React, { useState, useCallback, useEffect } from 'react';
 import { 
   ArrowDown, 
@@ -15,16 +14,24 @@ import {
   CheckCircle2,
   Loader2,
   Copy,
-  ExternalLink
+  ExternalLink,
+  Clock,
+  Wallet,
+  Calendar,
+  Zap,
+  Loader
 } from 'lucide-react';
 import { useAccount, useBalance, usePublicClient, useReadContract, useWalletClient } from 'wagmi';
 import { arbitrumSepolia, avalanche, avalancheFuji, Chain, etherlink, hardhat, optimismSepolia, pgn, polygon, polygonAmoy, sepolia } from 'wagmi/chains';
 import { formatEther } from 'viem/utils';
 import { eERC20ContractInterface, eERC20ZKProofGenerator, EncryptedBalance, initializeContractInterface, initializeProofGenerator } from '@/utils/zkProofInputs';
-import {ethers, providers, Signer, utils, Wallet} from "ethers"
+import {ethers, utils} from "ethers"
 import { parseEther } from 'ethers/lib/utils';
-import {  CONTRACTS_ERC20, CONTRACTS_REGISTRARY, ENCRYPTED_ERC_ABI, provider,  REGISTRARY_ABI, } from '@/hooks/config/configs'
-import { useABWallet } from '@/hooks/useABWallet';
+import {  CONTRACTS_ERC20, CONTRACTS_REGISTRARY, derivePublicKey, ENCRYPTED_ERC_ABI, provider,  REGISTRARY_ABI, } from '@/hooks/config/configs'
+import { DepositResult, useABWallet, WalletInfo } from '@/hooks/useABWallet';
+import { hasZeroCodeLength, localConfig } from '@/hooks/config/bridge_Networkish';
+import { CONTRACT_ADDRESSES } from '../../constants/PrimeFactory';
+
 
 interface RegistrationResult {
   isRegistered: boolean;
@@ -46,19 +53,12 @@ interface Balance {
 
 interface EnhancedWalletProps {
   balance: Balance;
-  userHoldingWallet: string | null;
-  hasValidNames: boolean;
-  onCreateWallet?: () => void;
-  onRegisterName?: () => void;
-  
  }
+
  
 export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     balance,
-    userHoldingWallet,
-    hasValidNames,
-    onCreateWallet,
-    onRegisterName,
+ 
 }) => {
 
     const { isConnected } = useAccount();
@@ -71,7 +71,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     const [secretKey, setSecretKey] = useState<string>('');
     const [decryptionKey, setDecryptionKey] = useState<string | null>(null);
     const [proofGenerator, setProofGenerator] = useState<eERC20ZKProofGenerator | null>(null);
-    const [contractInterface, setContractInterface] = useState<eERC20ContractInterface | null>(null);
+    const [contractInterface, setContractInterface] = useState<ethers.Contract | null>(null);
     const [loading, setLoading] = useState(false);
 
     const [zkProofStatus, setZKProofStatus] = useState<'idle' | 'generating' | 'submitting' | 'completed' | 'failed'>('idle');
@@ -82,27 +82,49 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       isRegistered: false,
       loading: false
     });
-    
-    // Transaction forms
+    // Regular wallet 
+    const [ status_Reg, setStatus_Reg] = useState<string>('');
+    const [error_Reg, setError_Reg] = useState<string>('');
+    const [isCreatingWallet, setIsCreatingWallet] = useState(false);
+    const [userHoldingWallet, setUserHoldingWallet] = useState<string | null>('');
+    const [ walletExpiryInfo, setWalletExpiry ] = useState<WalletInfo>({
+      walletAddress: '', 
+      creationTime: Number(0), 
+      timeUntilExpiry: Number(0), 
+      isExpired: false, 
+      bondBalance: Number(balance.bonds), 
+      walletBalance: '' 
+    })
+    // E-ERC20 Transaction forms
     const [transferForm, setTransferForm] = useState({ recipient: '', amount: ''});
     const [mintForm, setMintForm] = useState({ amount: ''});
-    const [balanceProofForm, setBalanceProofForm] = useState({ minBalance: ''});
+  //  const [balanceProofForm, setBalanceProofForm] = useState({ minBalance: ''});
     const [depositTokenAddress, setDepositTokenAddress] = useState<string>('');
-    const [depositAmount, setDepositAmount] = useState<string>('');
     const [withdrawTokenId, setWithdrawTokenId] = useState<string>('');
     const [withdrawAmount, setWithdrawAmount] = useState<string>('');
-    const [burnAmount, setBurnAmount] = useState<string>('')
-    const [activeTab, setActiveTab] = useState<'regular' | 'encrypted'>('regular');
-  //  const [targetAddress, setTargetAddress] = useState('');
+    const [burnAmount, setBurnAmount] = useState<string>('');
+    const [depositAmount, setDepositAmount] = useState<string>('');
+    const [ registrationCollapsed, setRegistrationCollapsed ] = useState(false);
+    
+    // regular actions
+    const [depositAmount_Reg, setDepositAmount_Reg] = useState<string>('');
+    const [depositAddressToken, setDepositAddressToken] = useState<string>('')
+    const [amount, setAmount] = useState({ recipient: '', transferAmount: ''})
+  //  const [activeTab, setActiveTab] = useState<'regular' | 'encrypted'>('regular');
+    const [tokenAddress, setTokenAddress] = useState('');
     const publicClient: any = usePublicClient();
     const  walletClient: any = useWalletClient();
-    const { data: avaxBalance } = useBalance({
+    const { data: avaxBalance, data: sepoliaETH, data: anvilETH, data: polygonAmoyMatic } = useBalance({
         address,
         chainId: avalanche?.id || avalancheFuji.id || hardhat.id || polygon.id 
         || sepolia.id || arbitrumSepolia.id 
         || optimismSepolia.id || polygonAmoy.id 
+      });   
+    // regular state
+    const [transactionState, setTransactionState] = useState({
+      isLoading: false,
+      status: 'idle', // 'idle' | 'pending' | 'success' | 'error'
       });
-    const [isDeposit, setDeposit] = useState(false);
     const [isTransfer, setTransfer] = useState(false);
     const abWallet = useABWallet();
       
@@ -110,71 +132,67 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     const [encryptedBalance] = useState<EncryptedBalance>({
       C1: ["0", "0"],
       C2: ["0", "0"]
-    })
+    });
+
     
     const [currentBalance] = useState<string>('1000'); // const actualEncryptedBalance = contractInterface?.getBalance('', ''); 
 
-    if (!isConnected) {
-        return (
-        <div className="text-center py-8 text-gray-400">
-            Wallet not connected
-            </div>
-            );
-    };
-    
+
     // ========================================================================================
     // eERC20 INITIALIZATION
     // ========================================================================================
 
+    const canAccessEncrypted = abWallet.userNames || provider._getAddress//abWallet.signer?.getAddress();
+
+    const initializeABWalletHook = async () => {
+      
+      const connectToWallet = await abWallet.connectWallet();
+      console.log("initailization of abWallet hook", connectToWallet);
+
+      return abWallet.account, abWallet.provider, abWallet.signer;
+    }
     
-    const signer =  provider.getSigner();
-
-    const anyChainId = provider.getNetwork();
-
-    useEffect(() => {
-      if (isConnected && address && signer && !proofGenerator) {
-        initializeEERC20System();
-        loadUserEERC20State(address);
-      }
-    }, [isConnected, address, signer]);
-
-        // Check if user can access eERC20 features
-    const canAccessEncrypted = Wallet.isSigner(address) || hasValidNames || address?.codePointAt.length !== 0;
-
     const initializeEERC20System = async () => {
-        const provider = new ethers.providers.Web3Provider(window.ethereum);
+      
+        const provider = new ethers.providers.JsonRpcProvider(localConfig.rpcUrl);//new ethers.providers.Web3Provider(window.ethereum);
+        const signer =  provider.getSigner();
   
-        const auditoPublicKey: [string, string] = ["0", "0"];//await proofGenerator.derivePublicKey(pk.call.toString());
-        const generator = await initializeProofGenerator(provider, auditoPublicKey);
+        const auditoPublicKey: {pubKeyX: string, pubKeyY: string}  = await derivePublicKey(await loadOrGenerateSecretKey('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'));
+        
+        const generator = new eERC20ZKProofGenerator(provider, [auditoPublicKey.pubKeyX, auditoPublicKey.pubKeyY]);//await initializeProofGenerator(provider, [auditoPublicKey.pubKeyX, auditoPublicKey.pubKeyY]);
+       
+        console.log('generator is operational', generator);
 
-        const contract =  await initializeContractInterface(
-              CONTRACTS_ERC20,
-              ENCRYPTED_ERC_ABI,
-              signer,
-              generator
-            );
+        const contract =  new ethers.Contract(CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, signer);
+        console.log('contract is initialisng', contract);    
 
-          if (publicClient && walletClient && address) {
+        if (publicClient && walletClient && address) {
+          
+          //Initialize proof generator with audito public
+          setProofGenerator(generator);
             
-            //Initialize proof generator with audito public
-            setProofGenerator(generator);
-            
-            // Initialize contract interface
-            setContractInterface(contract);
+          // Initialize contract interface
+          setContractInterface(contract);
       }
      
       return {publicClient, walletClient, address};
 
-    }
-    // Check registration status on mount
+    };
+    
     useEffect(() => {
-        if (address && canAccessEncrypted) {
-            checkRegistration(address);
-        }
-    }, [address, canAccessEncrypted, isRegisteredForEERC20]);
+      
+      if (isConnected && address  && !proofGenerator) {
+        initializeEERC20System();
+        loadUserEERC20State(address);
+        initializeABWalletHook();
+      }
+      
+    }, [isConnected, address, proofGenerator]);
 
     const checkRegistration = async (address: string) => {
 
+      const signer =  provider.getSigner();
+      
       if (!address || !publicClient) return false;
 
       setResult({ isRegistered: false, loading: true});
@@ -182,32 +200,55 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       try {
         const contracts_registrary = new ethers.Contract(CONTRACTS_REGISTRARY, REGISTRARY_ABI, signer);
         const registrationResult: boolean =  await contracts_registrary.isUserRegistered(address);
-
+        
         setResult({
           isRegistered: registrationResult,
           error:  undefined,
           loading: false
         });
+
+        setIsRegisteredForEERC20(registrationResult);
       } catch (error) {
         setResult({
           isRegistered: false,
           error: error instanceof Error ? error.message : 'Unkown error',
           loading: false
         });
+        
       }
+      
     }
 
+    // Check registration status on mount
+    useEffect(() => {
+        if (address) {
+            checkRegistration(address);
+        }
+    }, [address]);
+
+    useEffect(() => {
+      if (zkProofStatus === 'completed' && isRegisteredForEERC20) {
+        setTimeout(() => setRegistrationCollapsed(true), 2000);
+      }
+    }, [zkProofStatus, isRegisteredForEERC20]);
+
     const handleRegister = async () => {
-      if (!walletClient) return;
+      
+      const anyChainId = await provider.getNetwork();
 
-      const addr =  signer._address
+      const canRegister = await hasZeroCodeLength(`${address}`, provider);
+      if (!walletClient || canRegister) return;
 
-      const chainId = (await anyChainId).chainId
+      const chainId =  anyChainId.chainId;
+
+      const sk = await loadOrGenerateSecretKey(`0x${address}`)
+      setSecretKey(sk);
 
       try {
         setZKProofStatus('generating');
-        const registrationResult = await contractInterface?.register(addr, chainId, secretKey);
-        
+        const registrationResult = await contractInterface?.register(`${address}`, chainId, sk);
+
+        setIsRegisteredForEERC20(true);
         setZKProofStatus('submitting');
 
         return {
@@ -231,23 +272,22 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         setIsRegisteredForEERC20(true);
 
         // Load or generate secret key
-        const sk = await loadOrGenerateSecretKey(userAddress);
-        setSecretKey(sk);
+       if (isRegistered) {
+         const sk = await loadOrGenerateSecretKey(userAddress);
+         setSecretKey(sk);
+       }
 
         // Load encrypted balance if registered
         if (isRegistered) {
-          const encryptedBalance = await contractInterface?.getBalance(userAddress, '')//useEncryptedBalance();
-          //setEncryptedTokenBalance(encBalance.encryptedBalance);
+          const encryptedBalance = await contractInterface?.getBalance(userAddress, '0x9a676e781a523b5d0c0e43731313a708cb607508')//useEncryptedBalance();
+          //setEncryptedTokenBalance(encryptedBalance);
         }
-
-        const encryptedBalance =  await contractInterface?.getBalance(userAddress, '')//useEncryptedBalance();
-          
+         
       } catch (error: any) {
         console.error('Failede to load eERC20 state:', error);
       }
-    };
+    }
 
-  
     // ========================================================================================
     // eERC20 OPERATIONS
     // ========================================================================================
@@ -296,7 +336,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         setZKProofStatus('failed');
         alert(`Transfer failed: ${error.message}`);
       }
-    }, []);
+    }, [encryptedBalance, secretKey, transferForm.amount, transferForm.recipient, encryptedTokenBalance, contractInterface]);
 
     const handleMintTokens = useCallback(async () => {
       if (!proofGenerator || !secretKey || !mintForm.amount || !address ) {
@@ -309,11 +349,14 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         console.log('🔐️ Generating mint proof...');
         setZKProofStatus('submitting');
 
+        const signer =  provider.getSigner();
+        const anyChainId = await provider.getNetwork();
+
         const amount = parseEther(mintForm.amount).toString();
 
         const chainId = (await anyChainId).chainId
 
-        const nonce =  signer.getTransactionCount;
+        const nonce =  signer.getTransactionCount();
 
         const nullifierHash = await proofGenerator.generateNullifier(address, nonce.toString(), secretKey)
 
@@ -341,7 +384,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         setZKProofStatus('failed');
         setStatus(`Minting failed: ${error.message}`)
       }
-    }, []);
+    }, [address, encryptedTokenBalance, mintForm.amount, proofGenerator, secretKey]);
 
     const handleEncryptedBurn = useCallback(async () => {
       if (!contractInterface || !secretKey) {
@@ -376,30 +419,49 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       } finally {
         setLoading(false);
       }
-    }, [])
+    }, [burnAmount, contractInterface,currentBalance, encryptedBalance, secretKey]);
 
     const handleEncryptedDeposit = useCallback(async () => {
       if  (!contractInterface || !proofGenerator) {
-        setError('COntract not initialized');
+        setError('Contract not initialized');
         return;
       }
-      
+      const contract =  new ethers.Contract(CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, provider.getSigner());
+      console.log("deposit function:", contract.functions);
+      const abiIERC20 = new ethers.utils.Interface([
+      "function approve(address spender, uint256 value)  returns (bool)",
+      'function decimals() view returns (uint8)']);
+    
       try {
-        let secretKey = signer;
+             const IERC20_instance = new ethers.Contract(depositTokenAddress, abiIERC20, provider.getSigner());
+   
+        const tokenDecimal = await IERC20_instance.decimals();
+              console.log("decimals for tokens", tokenDecimal);
+              const bigN = ethers.utils.parseUnits(depositAmount.toString(), tokenDecimal);
+        
         // Generate PCT foir deposit amount
-        const amountPCT = await proofGenerator.generateBalancePCT(depositAmount, secretKey.toString());
+        const amountPCT = await proofGenerator.generateBalancePCT(depositAmount, (await loadOrGenerateSecretKey(`0x${address}`)));
         setZKProofStatus('generating');
-        const tx = await contractInterface.deposit(
-          depositAmount,
+        const track_function = await contract.connect(provider.getSigner()).deposit({
+          amount: bigN,
+          tokenAddress: depositTokenAddress,
+          amountPCT: amountPCT
+        });
+        console.log("function deposit tracking: progress:", track_function.wait())
+        const tx = await contract.deposit(
+          bigN,
           depositTokenAddress,
           amountPCT,
           'Deposit via eERC20'
         );
+        console.log("check transaction tx:", tx);
         setZKProofStatus('submitting');
         setStatus('Transaction submitted. Waiting for conformation...');
         await tx.wait();
         setZKProofStatus('completed');
         setStatus('✅️ Deposit successful!');
+        
+        setDepositTokenAddress('');
         setDepositAmount('');
         } catch (err: any) {
           setZKProofStatus('failed');
@@ -408,7 +470,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         } finally {
           setLoading(false);
         }
-    }, []);
+    }, [contractInterface, depositAmount, depositTokenAddress, proofGenerator]);
 
     const handleEncryptedWithdraw = useCallback(async () => {
       if (!contractInterface || !secretKey) {
@@ -445,37 +507,130 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       } finally {
         setLoading(false);
       }
-    }, []);
+    }, [contractInterface, currentBalance, encryptedBalance, secretKey, withdrawAmount, withdrawTokenId]);
 
     ////////////////////////////////////////////////////////////////////////////////////
     //================= REGULAR WALLET ========================= REGULAR WALLET ======//
     ////////////////////////////////////////////////////////////////////////////////////
-    const handleDeposit = useCallback(async () => {
-      setDeposit(true);
+
+    const formatTimeRemaining = (milliseconds: number) => {
+      const days = Math.floor(milliseconds / (24 * 60 * 60 * 1000));
+      console.log("date: day:", days);
+
+      return days;
+    }
+
+    const getExpiryUrgency = (timeUntilExpiry: number) => {
+      const days = formatTimeRemaining(timeUntilExpiry);
+
+      if (days < 7) return { color: 'red', level: 'urgent', icon: AlertCircle};
+
+      if (days < 30) return {color: 'orange', level: 'warning', icon: Clock};
+      return { color: 'green', level: 'good', icon: CheckCircle2};
+      
+    }
+
+    const formatDate = (timestamp: number) => {
+      return new Date(timestamp).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    }
+
+    const initializeWalletState = async () => {
       
       try {
-        await abWallet.deposit(depositTokenAddress, Number(depositAmount));
-        console.log("depositing funds");
+        const info = await abWallet.fetchWalletInfo();
+        console.log("info:", info);
+        console.log("address check:", info?.walletAddress);
+        if (info?.walletAddress !== '0') {
+          setUserHoldingWallet(info?.walletAddress);
+          setWalletExpiry({
+            walletAddress: info?.walletAddress,
+            creationTime: info?.creationTime,
+            timeUntilExpiry: info?.timeUntilExpiry,
+            isExpired: info?.isExpired,
+            bondBalance: info?.bondBalance,
+            walletBalance: info?.walletBalance
+          });
+        }
       } catch (error: any) {
-        throw error;
-      } finally {
-        setDeposit(false);
+        console.error("user wallet address not found:", error);
+        throw new Error("wallet info undefined", error.message);
       }
-    }, []);
+    }
+
+    useEffect(() => {
+      if (isConnected && address) {
+        initializeWalletState();
+      }
+    }, [isConnected, address]);
+
+    const handleCreateWallet = useCallback(async () => {
+      setIsCreatingWallet(true);
+      
+      try {
+        
+        const tx = await abWallet.createWallet();
+        console.log("wallet creation log:", tx);
+        // k wallet creation success
+        setIsCreatingWallet(true)
+        setUserHoldingWallet(walletExpiryInfo.walletAddress);
+        console.log('holding wallet created successfully');
+        setStatus_Reg(tx.hash);
+      
+      } catch (error) {
+        console.error('Failed to create holding wallet:', error);
+      
+      } finally {
+        setIsCreatingWallet(false);
+      }
+    }, [abWallet]);
+
+    
+    const handleDeposit = useCallback(async () => {
+      setTransactionState({ isLoading: true, status: 'pending' });
+
+      try {
+        const tx_ =  await abWallet.deposit(depositAddressToken, Number(depositAmount_Reg));
+        console.log("depositing funds");
+
+        // wait for cornfirmation
+        setTransactionState({ isLoading: true, status: 'confirming' });
+        console.log("transaction:",   tx_.tx1);
+        setStatus_Reg(`${tx_.tx1 ? tx_.tx1 : 'deposit successful'}`);
+        setTransactionState({ isLoading: false, status: 'success' });
+
+        setDepositAddressToken('');
+        setDepositAmount_Reg('');
+        
+      } catch (error: any) {
+        console.error('failed to deposit', error);
+        setError_Reg(`${error ? error : undefined}`);
+
+        setTransactionState({ isLoading: false, status: 'error' });
+        
+      } finally {
+        setTransactionState({ isLoading: false, status: 'idle' });
+        
+        setError(`${error ? error : ''}`); 
+      }
+    }, [abWallet, depositAmount_Reg, depositAddressToken]);
     
     const handleTransfer = useCallback(async () => {
       
       setTransfer(true);
       
       try {
-        await abWallet.transfer(depositTokenAddress, transferForm.recipient, Number(transferForm.amount));
-        console.log("transfering funds");
+        const tx_ = await abWallet.transfer(tokenAddress, amount.recipient, Number(amount.transferAmount));
+        console.log("transfering funds:", tx_);
       } catch (error: any) {
         console.error("transfer failed", error);
       } finally {
         setTransfer(false);
       }
-    }, []); 
+    }, [tokenAddress, amount.transferAmount, amount.transferAmount, abWallet]); 
 
     const handleWithdraw = useCallback(async () => {
 
@@ -492,7 +647,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       } finally {
         setLoading(false)
       }
-    }, [])
+    }, [abWallet])
 
     // ========================================================================================
     // HELPER FUNCTIONS
@@ -510,84 +665,249 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       navigator.clipboard.writeText(text);
     }
 
-    const renderHoldingWalletInfo = () => (
-      userHoldingWallet && (
-        <div className="bg-gradient-to-br from-green-900/20 to-emerald-900/20
-         rounded-xl p-6 border border-green-500/30">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-semibold text-green-400">
-              Holding Wallet Created
-            </h3>
-            <CheckCircle2 className="text-green-400" size={20} />
-          </div>
-          <div className="bg-gray-800 rounded-lg p-3 flex items-center justify-between">
-            <div className="flex-1 mr-3">
-              <p className="text-gray-400 text-sm">Address:</p>
-              <p className="text-white font-mono text-sm break-all">{userHoldingWallet}</p>
+    if (!isConnected) {
+        return (
+        <div className="text-center py-8 text-gray-400">
+            Wallet not connected
             </div>
-            <div className="flex space-x-2">
+            );
+    };
+
+    const renderHoldingWalletCard = () => {
+      if (!walletExpiryInfo.walletAddress) return null;
+
+     
+      const urgency = getExpiryUrgency(walletExpiryInfo.timeUntilExpiry);
+      const daysRemaininig = formatTimeRemaining(walletExpiryInfo.timeUntilExpiry);
+      const expiryDate = new Date(Date.now() + walletExpiryInfo.timeUntilExpiry);
+      const creationDate = new Date(walletExpiryInfo.creationTime);
+      const progress = ((90 - daysRemaininig) / 90 ) * 100;
+
+      return (
+        <div className={`sticky top-0 z-10 bg-gradient-to-br ${
+          urgency.level === 'urgent' ? 'from-red-900/30 to-red-800/30 border-red-500/50' :
+          urgency.level === 'warninig' ? 'from-orange-900/30 to-orange-800/30 border-orange-500/50' :
+          'from-green-900/20 to-emerald-900/20 border-green-500/30'
+        } rounded-xl p-6 border backdrop-blur-sm mb-6`}>
+          <div className='flex items-start justify-between mb-4'>
+            <div className='flex items-center space-x-3'>
+              <div className={`p-3 rounded-full ${urgency.level === 'urgent' ? 'bg-red-500/20' :
+                urgency.level === 'warning' ? 'text-orange-500' : 'text-green-500/20'
+               }`}>
+                <Wallet className={`${
+                  urgency.level === 'urgent' ? 'text-red-400' : 
+                  urgency.level === 'warning' ? 'text-orange-400' :
+                  'text-green-400'
+                }`} size={24}/>
+              </div>
+              <div>
+                <h3 className='text-lg font-semibold text-white'>Your Holding Wallet</h3>
+                <p className='text-gray-400 text-sm'>Secure proxy contract</p>
+              </div>
+            </div>
+            <urgency.icon className={`${
+              urgency.level === 'urgent' ? 'text-red-400' :
+              urgency.level === 'warning' ? 'text-orange-400' :
+              'text-green-400'
+            }`} size={24}/>
+          </div>
+
+          <div className='bg-gray-800/50 rounded-lg p-4 mb-4'>
+           <div className='flex items-center justify-between mb-2'>
+            <p className='text-gray-400 text-sm'>Address:</p>
+            <div className='flex items-center space-x-2'>
               <button 
-              onClick={() => copyToClipBoard(userHoldingWallet)}
-              className="p-2 bg-gray-700 hover:bg-gray-600 rounded
-              text-gray-300 hover:text-white transition-colors">
+               onClick={() => copyToClipBoard(walletExpiryInfo.walletAddress)}
+               className='p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-gray-300
+               hover:text-white transition-colors'>
                 <Copy size={14} />
               </button>
-              <button className="p-2 bg-gray-700 hover:bg-gray-600 rounded
-               text-gray-300 hover:text-white transition-colors">
-                <ExternalLink size={14} />
-               </button>
+              <button className='p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-gray-300
+              hover:text-white transition-colors'>
+                <ExternalLink size={14}/>
+              </button>
+            </div>
+           </div>
+           <p className='text-white font-mono text-sm break-all'>{walletExpiryInfo.walletAddress}</p>
+          </div>
+
+          <div className='grid grid-cols-2 gap-4 mb-3'>
+            <div className='bg-gray-800/50 rounded-lg p-3'>
+             <div className='flex items-center space-x-2 mb-1'>
+              <Calendar size={14} className='text-gray-400' />
+              <p className='text-gray-400 text-xs'>Created</p>
+             </div>
+              <p className='text-white text-sm font-medium'>{formatDate(Number(creationDate.toDateString))}</p>
+            </div>
+
+            <div className='bg-gray-800/50 rounded-lg p-3'>
+             <div className='flex items-center space-x-2 mb-1'>
+              <Clock size={14} className={urgency.level === 'urgent' ? 'text-red-400' :
+                urgency.level === 'warning' ? 'text-orange-400' : 'text-green-400'
+              } />
+              <p className='text-gray-400 text-xs'>Expires</p>
+             </div>
+             <p className={`text-sm font-medium ${
+              urgency.level === 'urgent' ? 'text-red-400' :
+              urgency.level === 'warning' ? 'text-orange-400' :
+              'text-green-400'
+             }`}>{formatDate(Number(expiryDate.toDateString))}</p>
             </div>
           </div>
-         </div>
-      )
-    );
 
-    const renderRegistrationPanel = () => (
-      !isRegisteredForEERC20 && canAccessEncrypted &&  (
-            <div className="bg-gradient-to-br from-purple-900/20 to-indigo-900/20 rounded-xl p-6 border border-purple-500/30">
-                <div className="flex items-center mb-4">
-                    <Shield className="mr-3 text-purple-400" size={24} />
-                    <h3 className="text-xl font-bold text-white">eERC20 Privacy Setup</h3>
-                </div>
-                
-                {zkProofStatus !== 'idle' && (
-                    <div className="mb-4 bg-gray-800/50 rounded-lg p-3">
-                        <div className="flex items-center space-x-3">
-                            <div className={`w-3 h-3 rounded-full ${
-                                zkProofStatus === 'generating' ? 'bg-yellow-400 animate-pulse' :
-                                zkProofStatus === 'submitting' ? 'bg-blue-400 animate-pulse' :
-                                zkProofStatus === 'completed' ? 'bg-green-400' :
-                                'bg-red-400'
-                            }`}></div>
-                            <span className="text-white text-sm">
-                                {zkProofStatus === 'generating' && 'Generating Zero-Knowledge Proof...'}
-                                {zkProofStatus === 'submitting' && 'Submitting Registration...'}
-                                {zkProofStatus === 'completed' && 'Registration Completed Successfully'}
-                                {zkProofStatus === 'failed' && 'Registration Failed'}
-                            </span>
-                        </div>
-                    </div>
-                )}
-
-                <p className="text-gray-300 text-sm mb-4">
-                    Enable encrypted transactions with eERC20 tokens. This will generate a decryption key and register you for private operations.
-                </p>
-                
-                <button
-                    onClick={handleRegister}
-                    disabled={zkProofStatus !== 'idle'}
-                    className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:bg-gray-600 text-white py-3 px-4 rounded-lg transition-all duration-300 font-medium flex items-center justify-center"
-                >
-                    {zkProofStatus === 'generating' ? (
-                        <Loader2 className="animate-spin mr-2" size={16} />
-                    ) : (
-                        <Key className="mr-2" size={16} />
-                    )}
-                    {zkProofStatus === 'generating' ? 'Setting Up...' : 'Enable eERC20 Privacy'}
-                </button>
+          <div className='mb-2'>
+            <div className='flex items-center justify-between mb-2'>
+              <span className='text-white text-sm font-medium'>{(daysRemaininig)} days remaining</span>
+              <span className='text-green-900 text-xs'>{progress.toFixed(0)}% elapsed</span>
             </div>
-        )
-    );
+            <div className='w-full bg-gray-700 rounded-full h-2'>
+              <div className={`h-2 rounded-full transition-all ${
+                urgency.level === 'urgent' ? 'bg-red-500' :
+                urgency.level === 'warning' ? 'bg-orange-500' :
+                'bg-green-500'
+              }`}
+               style={{ width: `${100 - progress}%`}} 
+               />
+            </div>
+          </div>
+
+          <p className={`text-sm ${
+            urgency.level === 'urgent' ? 'text-red-300' :
+            urgency.level === 'warning' ? 'bg-orange-300' :
+            'bg-green-300'
+          }`}>
+            {urgency.level === 'urgent' && '⚠️ Urgent: Withdraw your funds before expiry!'}
+            {urgency.level === 'warning' && '⏰️Warning: Plan to withdraw your funds soon'}
+            {urgency.level === 'good' && '✅️ Wallet is active and in good standing'}
+          </p>
+        </div>
+      )
+    }
+
+    const renderRegistrationPanelProminent = () => {
+      if (isRegisteredForEERC20 && registrationCollapsed) {
+        return (
+          <div className='bg-gradient-to-br from-green-900/20 to-emerald-900/20
+          rounded-xl p-4 border border-green-500/30 mb-6'>
+            <div className='flex items-center justify-between'>
+              <div className='flex items-center space-x-3'>
+                <CheckCircle2 className="text-green-400" size={24} />
+                <div>
+                  <h3 className='text-lg font-semibold text-green-400'>Motel Smart Wallet Enabled</h3>
+                  <p className='text-gray-300 text-sm'>Privacy Features Unlocked</p>
+                </div>
+              </div>
+              <button 
+               onClick={() => setRegistrationCollapsed(false)}
+               className='text-gray-400 hover:text-white text-sm'>
+                View Details
+              </button>
+            </div>
+          </div>
+        );
+
+      }
+
+      if (isRegisteredForEERC20 && !registrationCollapsed) {
+        return (
+          <div className='bg-gradient-to-br from-green-900/20 to-emerald-900/20
+          rounded-xl p-6 border border-green-500/30 mb-6'>
+            <div className='flex items-center justify-between mb-4'>
+              <div className='flex items-center space-x-3'>
+                <CheckCircle2 className='text-green-400' size={24} />
+                <h3 className='text-xl font-bold text-green-400'>Privacy Enabled Successfully</h3>
+              </div>
+              <button 
+               onClick={() => setRegistrationCollapsed(true)}
+               className='text-gray-400 hover:text-white'>
+                <ArrowDown size={20} />
+              </button>
+            </div>
+            <p className='text-gray-300 text-sm'>
+              Your Motel Smart Wallet is now active. All encrypted operations are available below.
+            </p>
+          </div>
+        );
+      }
+
+      return (
+        <div className='bg-gradient-to-br from-purple-900/30 to-indigo=900/30
+        rounded-xl p-8 border-2 border-500/50 mb-6 shadow-2xl'>
+          <div className='flex items-center justify-between mb-6'>
+            <div className='flex items-center space-x-4'>
+              <div className='p-4 bg-purple-600/20 rounded-full'>
+              <Lock className='text-purple-400' size={32} />
+              </div>
+              <div>
+                <h3 className='text-2xl font-bold text-white'>🔐 Unlock Motel Smart Wallet</h3>
+                <p className='text-purple-300 text-sm'>Enable encrypted operations 
+                  with zero-knowledge privacy</p>
+              </div>
+            </div>
+          </div>
+
+          {zkProofStatus !== 'idle' && (
+            <div className='mb-6 bg-gray-800/50 rounded-lg p-4'>
+              <div className='flex items-center space-x-3'>
+                <div className={`w-4 h-4 rounded-full ${
+                  zkProofStatus === 'generating' ? 'bg-yellow-400 animate-pulse' :
+                  zkProofStatus === 'submitting' ? 'bg-blue-400 animate-pulse' :
+                  zkProofStatus === 'completed' ? 'g-green-400' : 'bg-red-400'
+                }`}></div>
+                <span className='text-white font-medium'>
+                  {zkProofStatus === 'generating' && '⚡ Generating your encryption key...'}
+                  {zkProofStatus === 'submitting' && '📡 Registrayion on-chain...'}
+                  {zkProofStatus === 'completed' && '✅️ Registration completed successfully'}
+                  {zkProofStatus === 'failed' && '❌️ Registration failed'}
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div className='bg-bg-gray-800/30 rounded-lg p-6 mb-6'>
+           <h4 className='text-white font-semibold mb-4'>What you get:</h4>
+           <div className='space-y-3'>
+            <div className='flex items-center space-x-3'>
+              <CheckCircle2 className='text-green-400 flex-shrink-0' size={20} />
+              <span className='text-gray-300'>Private transfer with hidden amounts</span>
+            </div>
+            <div className='flex items-center space-x-3'>
+              <CheckCircle2 className='text-green-400 flex-shrink-0' size={20} />
+              <span className='text-gray-300'>Fully encrypted balance visibilty</span>
+            </div>
+            <div className='flex items-center space-x-3'>
+              <CheckCircle2 className='text-green-400 flex-shrink-0'/>
+              <span className='text-gray-300'>Untraceable transaction history</span>
+            </div>
+            <div className='flex items-center space-x-3'>
+              <CheckCircle2 className='text-green-400 flex-shrink-0' size={20}/>
+              <span className='text-gray-300'>Zero-Knowledge proof technology</span>
+            </div>
+           </div>
+          </div>
+          <button 
+           onClick={handleRegister}
+           disabled={zkProofStatus !== 'idle'}
+           className='w-full bg-gradient-to-r from-purple-600 to-indigo-600
+           hover:from-purple-700 hover:to-indigo-700 disabled:bg-gray-600
+           disabled:cursor-not-allowed text-white py-4 px-6 rounded-lg transition-all
+           duration-300 font-bold text-lg flex items-center justify-center shadow-lg'>
+            {zkProofStatus === 'generating' || zkProofStatus === 'submitting' ? (
+              <Loader2 className='animate-spin mr-2' size={24}/>
+            ) : (
+              <Key className='mr-2' size={24} />
+            )}
+            {zkProofStatus === 'generating' ? 'Setting Up...' :
+            zkProofStatus === 'submitting' ? 'Registering...' : 
+            'Enabled Privacy Now'}
+          </button>
+          <div className='mt-4 flex items-center justify-center space-x-2 text-yellow-400 text-xs'>
+            <AlertCircle size={15} />
+            <span>One-time setup • Permanent on-chain registration</span>
+          </div>
+        </div>
+      );
+     }
 
     const renderEncryptedActions = () => (
       <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 
@@ -620,7 +940,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
               }`}></div>
               <span className="text-white text-sm">
                 {zkProofStatus === 'generating' && 'Generating Zero-Knowledge Proof...'}
-                {zkProofStatus === 'submitting' && 'Submitting Encrypted transzction...'}
+                {zkProofStatus === 'submitting' && 'Submitting Encrypted transaction...'}
                 {zkProofStatus === 'completed' && 'Operation Completed Successfully'}
                 {zkProofStatus === 'failed' && 'Operation failed'}
               </span>
@@ -659,12 +979,13 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
              </div>
           </div>
           <p className="text-gray-400 text-xs mt-2">
-            Amount and balance remain completely private
+            💡 Amount and balance remain completely private
           </p>
         </div>
         {/**Mint Tokens (admin/testing) */}
         <div className="mb-6 bg-gray-800 rounded-lg p-4">
-          <h4 className="text-white font-semibold mb-3">💽️⚡️MInt Tokens</h4>
+          <h4 className="text-white font-semibold mb-3">💽️MInt Tokens</h4>
+          <Zap className='mr-2 text-yellow-400' size={18}/>
           <div className="space-y-3">
             <input
              type='number'
@@ -684,7 +1005,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
               Mint eETH Tokens
              </button>
           </div>
-          <p className="text-gray-400 text-xsmt-2">
+          <p className="text-gray-400 text-xs mt-2">
             🔧️ Testing/Admin feature
           </p>
         </div>
@@ -712,10 +1033,15 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
               focus:border-green-500 focus:outline-none placeholder-gray-400"
             />
           <button onClick={handleEncryptedDeposit}
-            disabled={loading || !depositAmount || !depositTokenAddress}
+            disabled={loading || !depositAmount || !depositTokenAddress }
             className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white
             py-3 px-4 rounded-lg transition-colors font-medium">
-              Encrypted Deposit
+              {zkProofStatus === 'generating' || zkProofStatus === 'submitting' ? (
+                <Loader2 className={` ${zkProofStatus === 'generating' ? 'animate-spin duration-500' :
+                  'animate-ping'
+                }`}size={24}/>
+              ) : `${zkProofStatus === 'completed' ? 'bg-green-400' : 
+              'Encrypted Deposit'}`}
             </button>  
           </div>
         </div>
@@ -733,7 +1059,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
             border-gray-600 focus:border-red-500 focus:outline-none placeholder-gray-400"/>
             <button 
               onClick={handleEncryptedBurn} 
-              disabled={loading || !burnAmount || !secretKey}
+              disabled={loading || !burnAmount || Number(encryptedTokenBalance) > 0}
               className="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-600 text-white
               py-3 px-4 rounded-lg transition-colors font-medium">
                 Burn
@@ -762,7 +1088,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
             className="w-full bg-gray-700 text-white px-3 py-2 rounded border
             border-gray-600 focus:border-orange-500 focus:outline-none placeholder-gray-400"
             />
-            <button onClick={handleEncryptedWithdraw} disabled={loading || !withdrawAmount || !secretKey}
+            <button onClick={handleEncryptedWithdraw} disabled={loading || !withdrawAmount}
               className="w-full bg-orange-600 hover:bg-orange-700
                disabled:bg-gray-600 text-white py-3 px-4 rounded-lg transition-colors font-medium">
                 Withdraw
@@ -801,30 +1127,40 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 border border-gray-700">
       <h3 className="text-xl font-bold text-white mb-4 flex items-center">
         <ArrowDown className="mr-2 text-blue-400" size={20} />
+        <Wallet className='mr-2 text-blue=400' size={20} /> 
         Quick Actions
       </h3>
 
-      { status && (
+      {status_Reg && (
           <div className="mb-4 bg-blue-900/30 border border-blue-500/50 p-4 rounded-lg">
-            <p className="text-blue-300">{status}</p>
+            <p className="text-blue-300">{status_Reg}</p>
           </div>
-        )}
+      )}
 
-      {error && (
+      {error_Reg && (
           <div className="mb-4 bg-red-900/30 border border-red-500/50 p-4 rounded-lg">
-            <p className="text-red-300">{error}</p>
+            <p className="text-red-300">{error_Reg}</p>
           </div>
-        )}
+      )}
 
       {/** Deposit */}  
       <div className="space-y-4">
-        <div className="bg-grray-800/50 rounded-lg p-4">
+        <div className="bg-gray-800/50 rounded-lg p-4">
         <h4 className="text-gray font-medium mb-3">💎️ Deposit</h4> 
          <div className="space-y-3">
           <input 
            type="text"
-           value={depositAmount}
-           onChange={(e: any) => setDepositAmount(e.target.value)}
+           value={depositAddressToken}
+           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDepositAddressToken(e.target.value)}
+           placeholder='0x token address '
+           className="w-full bg-gray-700 text-white px-3 py-2
+           rounded border border-gray-600 focus:border-green-500
+           focus:outline-none placeholder-gray-400 break-before-auto break-after-auto placeholder:break-after-auto"
+          />
+          <input 
+           type="text"
+           value={depositAmount_Reg}
+           onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDepositAmount_Reg(e.target.value)}
            placeholder='Amount to deposit'
            className="w-full bg-gray-700 text-white px-3 py-2
            rounded border border-gray-600 focus:border-green-500
@@ -832,12 +1168,28 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
           />
           <button
            onClick={handleDeposit}
+           disabled={transactionState.status !== 'idle' || depositAmount_Reg === '0' || !depositTokenAddress}  
            className={`w-full py-3 px-4 rounded-lg transition-all
-           duration-300 font-medium ${isConnected ? 'bg-green-600 hover:bg-green-700 text-white'
+           duration-300 font-medium ${!transactionState.isLoading || !depositAmount_Reg || 
+            !depositTokenAddress  ? 'bg-green-600 hover:bg-green-700 text-white'
             : 'bg-gray-700 text-gray-400 cursor-not-allowed'
            }`}
-           disabled={!isConnected}>
-            Deposit AVAX
+           >
+             {transactionState.isLoading ? (
+              <div className="flex items-center">
+                <Loader2 className={`size-10 md:size-5 ${
+                  transactionState.status === 'pending' 
+                  ? 'animate-spin duration-500' 
+                  : 'animate-pulse'
+              }`} />
+              <span className="ml-2">
+                {transactionState.status === 'pending' && 'Initiating'}
+                {transactionState.status === 'confirming' && 'Confirming'}
+              </span>
+            </div>
+          ) : (
+            'Deposit Avax'
+          )}
            </button>
         </div>
       </div>
@@ -848,24 +1200,24 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
 
         <input 
          type='text'
-         value={depositTokenAddress}
-         onChange={(e: any) => setDepositTokenAddress(e.target.value)}
+         value={tokenAddress}
+         onChange={(e: any) => setTokenAddress(e.target.value)}
          placeholder=' Enter token address'
          className='w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600
          focus:border-blue-500 focus:outline-none placeholder-gray-400'
          />
          <input 
          type='text'
-         value={transferForm.recipient}
-         onChange={(e: any) => setTransferForm({...transferForm, recipient: e.target.value})}
+         value={amount.recipient}
+         onChange={(e: any) => setAmount({...amount, recipient: e.target.value})}
          placeholder='Recipient address'
          className="w-full bg-gray-700 text-white px-3 py-2 rounded
          border border-gray-600 focus:border-blue-500 focus:outline-none placeholder-gray-400"
          />
          <input 
          type='text'
-         value={transferForm.amount}
-         onChange={(e: any) => setTransferForm({...transferForm, amount: e.target.value})}
+         value={amount.transferAmount}
+         onChange={(e: any) => setAmount({...amount, transferAmount: e.target.value})}
          placeholder='Enter amount to transfer'
          className='w-full bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 
          focus:border-blue-500 focus:outline-none placeholder-gray-400'/> 
@@ -875,19 +1227,18 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
                   ? 'bg-blue-600 hover:bg-blue-700 text-white'
                   : 'bg-gray-700 text-gray-400 cursor-not-allowed'
                 }`}
-              disabled={!isConnected}
+              disabled={!isTransfer}
             >Transfer funds
          </button>
         </div>
        </div>
 
-        <button onClick={handleWithdraw} 
+        <button onClick={handleWithdraw} disabled={!walletExpiryInfo}
               className={`w-full py-3 px-4 rounded-lg transition-all duration-300 font-medium
-                ${isConnected 
+                ${!walletExpiryInfo
                   ? 'bg-orange-600 hover:bg-orange-700 text-white'
                   : 'bg-gray-700 text-gray-400 cursor-not-allowed'
                 }`}
-              disabled={!isConnected}
             > 
             Withdraw (fee: 2%)
         </button>
@@ -895,154 +1246,144 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     </div>
   );
 
-  const renderBalanceOverview = () => (
-    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 border border-gray-700">
-      <h3 className="text-xl font-bold text-white mb-4 flex items-center">
-        <Eye className="mr-2 text-purple-400" size={20} />
+  const renderBalanceOverviewEnhanced = () => {
+    return (
+
+    <div className='bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl
+    p-6 border border-gray-700'>
+      <h3 className='text-xl font-bold text-white mb-4 flex items-center'>
+        <Eye className='mr-2 text-purple-400' size={20} />
         Balance Overview
       </h3>
-      <div className="space-y-4">
-        <div className="flex justify-between items-center py-2 border-b border-gray-700">
-          <span className="text-gray-400">AVAX balance</span>
-          <span className="text-white font-medium">
-                {avaxBalance ? `${parseFloat(formatEther(avaxBalance.value)).toFixed(4)} AVAX` : 'N/A'}
-           </span>
-        </div>
-        <div className="flex justify-between items-center py-2 border-b border-gray-700">
-          <span className="text-gray-400">AB bonds</span>
-          <span className="text-white font-medium">{balance.bonds} Bonds</span>
-        </div>
-        <div className="flex justify-between items-center py-2">
-          <span className="text-gray-400">Incentive Tokens</span>
-          <span className="text-gray-500">Coming soon</span>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderEncryptedBalanceOverView = () => (
-    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl
-    p-6 border border-gray-700">
-      <h3 className="text-xl font-bold text-white mb-4 flex items-center">
-        <Lock className="mr-2 text-purple-400" size={20} />
-        Encrypted balance
-      </h3>
-      <div className="space-y-4">
-        <div className="flex justify-between items-center py-2 border-b border-gray-700">
-          <span className="text-gray-400 flex items-center">
-            <Lock className="mr-1" size={12} />
-            Encrypted ERC20
+      <div className='space-y-4'>
+        <div className='flex justify-between items-center py-2 border-b border-gray-700'>
+          <span className='text-gray-400'>{`${avaxBalance?.symbol || anvilETH?.symbol || sepoliaETH?.symbol || polygonAmoyMatic?.symbol}` || 'AVAX BAlance'}</span>
+          <span className='text-white font-medium'>
+            {walletExpiryInfo.walletBalance ? `${
+              parseFloat(formatEther(BigInt(walletExpiryInfo.walletBalance))).toFixed(4)
+            } ${avaxBalance?.symbol || anvilETH?.symbol || sepoliaETH?.symbol || polygonAmoyMatic?.symbol}` : 'N/A'}
           </span>
-          <span className="text-green-400 font-medium">{balance.encrypted} eERC20</span>
         </div>
-        <div className="flex justify-between items-center 
-        py-2 border-b border-gray-700">
-          <span className="text-gray-400">AB Bonds</span>
-          <span className="text-white font-medium">{balance.bonds}</span>
+        <div className='flex justify-between items-center py-2 border-b 
+        border-gray-700'>
+          <span className='text-gray-400'>AB Bonds</span>
+          <span className='text-white font-medium'>{balance.bonds}Bonds</span>
         </div>
-        <div className="bg-purple-900/30 border border-purple-600/30
-        rounded-lg p-3 mt-4">
-          <p className="text-purple-300 text-xs">
-            🔐️ Your balance is encrypted and only visible to you. Transactions are
-            proccessed using zero-knowledge proofs.
-          </p>
+        {isRegisteredForEERC20 && (
+          <div className='flex justify-between items-center py-2 border-b 
+          border-purple-950'>
+            <span className='text-gray-400 flex items-center'>
+              <Lock className='mr-1' size={12} />
+              Encrypted ERC20
+            </span>
+            <span className='text-green-400 font-medium'>{encryptedTokenBalance}</span>
+          </div>
+        )}
+        {/** Wallet Expiry Info */}
+        { walletExpiryInfo.walletAddress && (
+          <div className='mt-4 pt-4 border-t border-gray-700'>
+            <div className='bg-gray-800/50 rounded-lg p-4'>
+             <div className='flex items-center justify-between mb-2'>
+              <h4 className='text-gray-300 font-medium flex items-center'>
+                <Calendar size={16} className='mr-2' />
+                Wallet Timeline
+              </h4>
+             </div>
+             <div className='space-y-2 text-sm'>
+              <div className='flex justify-between'>
+                <span className='text-gray-400'>Created:</span>
+                <span className='text-white'>{walletExpiryInfo.creationTime}</span>
+              </div>
+              <div className='flex justify-between'>
+                <span className='text-gray-400'>Expires:</span>
+                <span className={`font-medium ${getExpiryUrgency(walletExpiryInfo.timeUntilExpiry).level
+                  === 'urgent' ? 'text-red-400' : getExpiryUrgency(walletExpiryInfo.timeUntilExpiry).level
+                  === 'warning' ? 'text-orange-400' : 'text-green-400'
+                }`}>{formatDate(Date.now() + walletExpiryInfo.timeUntilExpiry)}</span>
+              </div>
+              <div className='flex justify-between'>
+                <span className='text-gray-400'>Days Remaining:</span>
+                <span className={`font-bold ${getExpiryUrgency(walletExpiryInfo.timeUntilExpiry).level
+                  === 'urgent' ? 'text-red-400' : getExpiryUrgency(walletExpiryInfo.timeUntilExpiry).level
+                  === 'warning' ? 'text-orange-400' : 'text-green-400'
+                }`}>{formatTimeRemaining(walletExpiryInfo.timeUntilExpiry)} Days</span>
+              </div>
+             </div>
+            </div>
+          </div>
+        )}
+        <div className='flex justify-between items-center py-2'>
+          <span className='text-gray-400'>Incentive Tokens</span>
+          <span className='text-gray-500'>Coming Soon</span>
         </div>
       </div>
     </div>
-  );
-
+    );
+  }
+  
   return (
     <div className="space-y-6">
         {/** Access setup section */}
-        {!canAccessEncrypted && (
+        {isConnected && canAccessEncrypted && !isCreatingWallet && walletExpiryInfo &&(
             <div className="bg-gradient-to-br from-yellow-900/20 to-orange-900/20
             rounded-xl p-6 border-yellow-500/30">
                 <h3 className="text-xl font-bold text-white mb-4">Get Started</h3>
                 <p className="text-gray-300 mb-4">Create a holding wallet or register a name access all features:</p>
                 <div className="flex gap-3">
                     <button 
-                    onClick={onCreateWallet}
-                    
+                    onClick={handleCreateWallet} disabled={isCreatingWallet}
                     className="flex bg-blue-600 hover:bg-blue-700 text-white py-2
-                    px-4 rounded-lg transtition-all duration-300 font-medium">
+                    px-4 rounded-lg transtition-all duration-300 font-medium disabled:bg-gray-200">
                         Create Holding Wallet
-                    </button>
-                    <button 
-                    onClick={onRegisterName}
-                    role="presentation"
-                    aria-placeholder='text...'
-                    className="flex-1 bg-purple-600 hover:bg-purple-700 text-white 
-                    py-2 px-4 rounded-lg transition-all duration-300 font-medium"
-                    >
-                        Register Name Service
                     </button>
                 </div>
             </div>
         )}
 
-        {renderHoldingWalletInfo()}
+        {/**Sticky Holding Wallet Info Card */}
+      {renderHoldingWalletCard()}
+        {/** Regular Wallet Operations - Always visible when has access*/}
+        {canAccessEncrypted && renderRegularActions()}
 
-        {/** eERC Registration Panel */}
-        {canAccessEncrypted && !isRegisteredForEERC20  && renderRegistrationPanel()}
-
-        {/** Tab Navigation */}
+        {/**Motel Smart Wallet Section */}
         {canAccessEncrypted && (
-            <div className="flex space-x-1 bg-gray-800 p-1 rounded-lg">
-                <button
-                onClick={() => setActiveTab('regular')}
-                className={`flex-1 py-2 px-4 rounded-mb transition-all duration-200
-                    font-medium ${activeTab === 'regular'
-                        ? 'bg-blue-600 text-white'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                >
-                    Regular Wallet
-                </button>
-                <button 
-                onClick={() => setActiveTab('encrypted')}
-                disabled={!isRegisteredForEERC20 }
-                className={`flex-1 py-2 px-4 rounded-md transition-all
-                duration-200 font-medium flex items-center justify-center ${
-                    activeTab === 'encrypted' && isRegisteredForEERC20 
-                    ? 'bg-purple-600 text-white'
-                    : !isRegisteredForEERC20 
-                    ? 'text-gray-600 cursor-not-allowed'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-                >
-                    <Lock className="mr-1" size={14} />
-                    Motel smart Wallet
-                </button>
-            </div>
+          <>
+          {!isRegisteredForEERC20 || !registrationCollapsed ?
+          renderRegistrationPanelProminent() : null}
+          {isRegisteredForEERC20 && renderEncryptedActions()}
+          </>
         )}
-
-        {/** Content based on active tab */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {activeTab === 'regular' ? renderRegularActions() : renderEncryptedActions()}
-            {activeTab === 'regular' ? renderBalanceOverview() : renderEncryptedBalanceOverView()}
-        </div>
+        {/**Balance Overview - Enhanced with expiry */}
+        {canAccessEncrypted && renderBalanceOverviewEnhanced()}
         
         { /** Recent Transactions */}
-        <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 border border-gray-700">
-        <h3 className="text-xl font-bold text-white mb-4">Recent Transactions</h3>
-        <div className="space-y-3">
-          <div className="flex justify-between items-center p-3 bg-gray-800 rounded-lg">
-            <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center">
-                <ArrowUpDown size={14} className="text-white" />
+        {canAccessEncrypted && (
+          <div className='bg-gradient-to-br from-gray-900 to-gray-800
+          rounded-xl p-6 border border-gray-700'>
+            <h3 className='text-xl font-bold text-white mb-4 '>Recent Transaction</h3>
+            <div className='space-y-3'>
+              <div className='flex justify-between items-center p-3 bg-gray-800
+              rounded-lg'>
+                <div className='flex items-center space-x-3'>
+                  <div className='w-8 h-8 bg-green-600 rounded-full flex 
+                  items-center justify-center'>
+                    <ArrowUpDown size={14} className='text-white'/>
+                  </div>
+                  <div>
+                    <p className='text-white font-medium'>Bond Purchase</p>
+                    <p className='text-gray-400 text-sm'>Premium Bond - 15%
+                      discount applied
+                    </p>
+                  </div>
+                </div>
+                <div className='text-right'>
+                  <p className='text-white font-medium'>-85 AVAX</p>
+                  <p className='text-gray-400 text-sm'>2 hours ago</p>
+                </div>
               </div>
-              <div>
-                <p className="text-white font-medium">Bond Purchase</p>
-                <p className="text-gray-400 text-sm">Premium Bond - 15% discount applied</p>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className="text-white font-medium">-85 AVAX</p>
-              <p className="text-gray-400 text-sm">2 hours ago</p>
             </div>
           </div>
-        </div>
-      </div>
+        )}        
     </div>
   );
 }
