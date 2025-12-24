@@ -1,6 +1,6 @@
 "use client"
 import React, { useState, useEffect, useCallback } from "react";
-
+import { ToastContainer, toast } from 'react-toastify';
 import { 
   Wallet, 
   Shield, 
@@ -15,7 +15,9 @@ import {
   Lock, 
   Unlock, 
   ArrowUpDown, 
-  FileText
+  FileText,
+  Coins,
+  Loader2
 } from "lucide-react";
 
 import { EnhancedWallet } from "@/components/EnhancedWallet";
@@ -24,14 +26,14 @@ import { useAccount, useBalance, useCall, useDisconnect } from "wagmi";
 import { anvil, avalanche, avalancheFuji, polygonAmoy, sepolia } from "viem/chains";
 import { formatEther } from "viem";
 import { eERC20ContractInterface, eERC20ZKProofGenerator } from "@/utils/zkProofInputs";
-import { ethers, providers } from "ethers";
+
 import { useABWallet } from "@/hooks/useABWallet";
-import { CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, provider } from "../hooks/config/configs";
+import { CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, provider_ } from "../hooks/config/configs";
 
 import { useRouter } from "next/navigation";
 import { NameService } from "@/components/NameServiceComponent";
 import  Image  from "next/image";
-import { localConfig } from "@/hooks/config/bridge_Networkish";
+
 interface EnhancedWalletProps {
   balance: any;
   userHoldingWallet: string | undefined;
@@ -42,7 +44,9 @@ const MotelSmartWallet = () => {
 
   const [ activeTab, setActiveTab ] = useState('dashBoard');
   const [ userRole, setUserRole ] = useState('player'); // 'admin' or 'player'
-  
+  const [ admin, setAdmin] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [statusBond, setStatusBond] = useState<string | null>(null);
   const abWallet = useABWallet();
 
   // eERC20 specific state
@@ -58,11 +62,19 @@ const MotelSmartWallet = () => {
 
  
   const [ bonds, setBonds ] = useState([
-    {id: 1, type: 'Premium', value: 1.11, discount: 15, available: 25 },
-    {id: 2, type: 'PremiumII', value: 5.555, discount: 15, available: 3 },
-    {id: 3, type: 'Elite', value: 30.5555, discount: 15, available: 3 },
-    { id: 4, type: 'Legendary', value: 110, discount: 15, available: 1 }
+    {id: 1, type: 'Premium', value: 1.11, discount: 15, available: 25, units:60 },
+    {id: 2, type: 'PremiumII', value: 5.555, discount: 15, available: 3, units: 310 },
+    {id: 3, type: 'Elite', value: 30.5555, discount: 15, available: 3, units: 1580 },
+    { id: 4, type: 'Legendary', value: 111.11, discount: 15, available: 1, units: 6500 }
   ]);
+
+  const [purchasingBondId, setPurchasingBondId] = useState<number | null>(null);
+  const [bondBalances, setBondBalances] = useState<Record<number, number>>({
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0
+  });
 
   /**const handleConnect = () => {
     setIsConnected(!isConnected);
@@ -94,7 +106,7 @@ const MotelSmartWallet = () => {
 
   // Get provided and signer from wagmi
   
-  const signer = provider.getSigner();
+//  const signer = _provider.getSigner();
   
   const initializeEERC20Integration = useCallback(async () => {
     try {
@@ -102,18 +114,15 @@ const MotelSmartWallet = () => {
 
       // Initialize proof generator
       
-      const pg = new eERC20ZKProofGenerator(provider, ['0','0']);
+      const pg = new eERC20ZKProofGenerator(provider_, ['0','0']);
       console.log("initialize generator", pg);
-
-      const connectToWallet = await abWallet.connectWallet();
-      console.log("initailization of abWallet hook", connectToWallet);
 
       // eERC20 contract interface
       const contractAddress = CONTRACTS_ERC20;//process.env.NEXT_PUBLIC_EERC20_CONTRACT;  // fuli or subnet eERC20 contract address
 
-      const ci = new eERC20ContractInterface(contractAddress, ENCRYPTED_ERC_ABI, signer, pg);
+      const ci = new eERC20ContractInterface(contractAddress, ENCRYPTED_ERC_ABI, provider_.getSigner(), pg);
       console.log("eERC20 contract initialize", ci);
-
+      
       setEERC20System({
         proofGenerator: pg,
         contractInterface: ci,
@@ -126,21 +135,101 @@ const MotelSmartWallet = () => {
       // Don't block the app if fails - show warning but continue
       console.warn('Continuing without eERC20 features');
     }
-  }, [signer]);
+  }, []);
 
-  /**
-   *   const handlePurchaseBond = useCallback( async() => {
+  const initializeUseABWallet = useCallback(async () => {
     try {
-      abWallet.purchaseBonds()
-    }
-  })
+      console.log('🚀️ Initializing useABWallet hook...')    
+      const connectToWallet = await abWallet.connectWallet();
+      console.log("initailization of abWallet hook", connectToWallet.account);
 
-   */
+      console.log('✅️ useABWallet initialized successfully');
+    } catch (error: any) {
+      console.error('❌️ useABWallet initialization failed:', error);
+    }
+  }, []);
+
   useEffect(() => {
     
     initializeEERC20Integration();
-    
   }, []);
+
+  // Handler for purchasing bonds
+  const handlePurchaseBond = useCallback(async(
+    bondId: number,
+    quantity: number = 1
+  ) => {
+    //const notify = () => toast("Wow so easy!");
+    const address_ = await abWallet.connectWallet().then(res => res.account);
+
+    if (!address_ || !abWallet.contracts?.bondNFT || address_ === address) {
+      toast.error("Please connect your wallet");
+    }
+
+    setPurchasingBondId(bondId);
+
+    try {
+      // Call the hook's purchaseBonds function
+      // bondId maps directly to bondType in the smart contract
+      const { purchaseTx, balanceTx} = await abWallet.purchaseBonds(bondId, quantity);
+
+      console.log("Purchase transaction:", (await purchaseTx.wait()).transactionHash.toString());
+      console.log("Balance update:", balanceTx);
+      const txHash = (await purchaseTx.wait()).transactionHash.toString();
+
+      // Update local bond balance
+      setBondBalances(prev => ({
+        ...prev,
+        [bondId]: (prev[bondId] || 0) + (bonds.find(b => b.id === bondId)?.units || 0)
+      }));
+
+      // Update available count
+      setBonds(prev => prev.map(bond => bond.id === bondId ?
+         { ...bond, available: bond.available - quantity } : bond
+      ));
+
+      setStatusBond(txHash ? txHash.toString() : 'Bond purchased');
+
+      toast.success(`Successfully purchased ${bonds.find(b => b.id === bondId)?.type} Bond!`);
+    } catch (error: any) {
+      console.error("Bond purchase failed:", error);
+      toast.error(error || "Failed to purchase bond");
+
+      setError(error ? error.message : 'purchase failed');
+    } finally {
+      setPurchasingBondId(null);
+    }
+  }, [address, abWallet.contracts?.bondNFT, bonds])
+
+  useEffect(() => {
+    const loadBondBalances = async (address: string | null) => {
+      //const address_ = (await abWallet.connectWallet()).account
+      if (!address || !abWallet.contracts?.bondNFT) return;
+      console.log("signer address:", await abWallet.connectWallet().then(res => res.account));
+      console.log("check address when mount:", address);
+
+      try {
+        const balances: Record<number, number> = {};
+        const connectContract =  abWallet.contracts.bondNFT.connect((await abWallet.connectWallet()).signer)
+        console.log("connect contract bonfNFT:", 
+          connectContract.provider.getNetwork().then(network => network.chainId));
+
+        // Load balance for each bond type
+        for (const bond of bonds) {
+          const balance = await connectContract.callStatic.balanceOf(
+            address,
+            bond.id
+          );
+          balances[bond.id] = balance.toNumber();
+        }
+        setBondBalances(balances);
+      } catch (error: any) {
+        console.error('Falied to load bond balances:', error);
+      }
+    }
+    loadBondBalances(abWallet.account || null);
+    console.log("address:", address);
+  }, [ abWallet.contracts?.bondNFT, bonds]);
    
   const router = useRouter();
 
@@ -150,10 +239,12 @@ const MotelSmartWallet = () => {
   }
 
   const switchRole = () => {
-    const admin = "0x001";
-    if (!admin) return; 
-    setUserRole(userRole === 'admin' ? 'player' : 'admin');
+    setAdmin(process.env.NEXT_PUBLIC_ADMIN_ADDRESS || null);
+    if (!admin) return;
+    const setUser = userRole === 'admin' ? 'player' : 'admin';
+    setUserRole(setUser);
   };
+
   interface TabButtonParams {
     id: any,
     label: any,
@@ -196,45 +287,103 @@ const MotelSmartWallet = () => {
       </div>
   );
 
-  interface BondCardAParams {
-    bond: any
+  interface BondCardParams {
+    bond: {
+      id: number;
+      type: string;
+      value: number;
+      discount: number;
+      available: number;
+      units: number;
+    };
+    onPurchase: (bondId: number) => void;
+    isPurchasing: boolean;
+    balance: number;
   }
-  const BondCard = ({ bond }: BondCardAParams ) => (
-    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl
-    p-6 border-gray-700 hover:border-blue-500 transition-all duration-300">
-      <div className="flex justify-between items-start mb-4">
-        <div>
-          <h3 className="text-xl font-bold text-white mb-1">{bond.type} Bond</h3>
-          <p className="text-gray-400 text-sm">Available: {bond.available}</p>
+
+  const BondCard = ({ bond, onPurchase, isPurchasing, balance }: BondCardParams) => {
+    const discountedPrice = bond.value * 0.85; // 15% discount
+    const savings = bond.value - discountedPrice;
+
+    return (
+      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl 
+      p-6 border border-gray-700 hover:border-blue-500 transition-all duration-300">
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <h3 className="text-xl font-bold text-white mb-1">{bond.type}Bond</h3>
+          </div>
+          <div className="text-right">
+            <p className="text-2xl font-bold text-green-400">${bond.value.toFixed(2)}</p>
+            <p className="text-purple-400 text-sm font-medium">{bond.discount}%OFF</p>
+          </div>
         </div>
-        <div className="text-right">
-          <p className="text-2xl font-bold text-green-400">${bond.value}</p>
-          <p className="text-purple-400 text-sm font-medium">{bond.discount}% OFF</p>
+        {/**Bond Units Diplay */}
+        <div className="bg-gray-800/50 rounded-lg px-3 py-2 mb-3 
+        flex items-center justify-between">
+          <span className="text-gray-400 text-sm">Bond Units:</span>
+          <div className="flex items-center gap-2">
+            <span className="text-blue-400 font-bold">{bond.units.toLocaleString()}</span>
+            <Coins className="text-yellow-400" size={16}/>
+          </div>
         </div>
+        <div className="bg-gray-800 rounded-lg p-3 mb-4">
+          <div className="flex justify-between text-sm mb-1">
+            <span className="text-gray-400">Original Price:</span>
+            <span className="text-gray-400 line-through">${bond.value.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between text-sm mb-1">
+            <span className="text-gray-400">Discounted Price:</span>
+            <span className="text-green-400 font-bold">${discountedPrice.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-purple-400">You Save:</span>
+            <span className="text-purple-400 font-bold">${savings.toFixed(2)}</span>
+          </div>
+        </div>
+        {/**Your Balance Display */}
+        {balance > 0 && (
+          <div className="bg-blue-900/20 border border-blue-500/30 
+          rounded-lg px-3 py-2 mb-3">
+            <div className="flex items-center justify-between">
+              <span className="text-blue-300 text-sm">Your Balance:</span>
+              <span className="text-blue-400 font-bold">{balance.toLocaleString()} units</span>
+            </div>
+          </div>
+        )}
+        <button onClick={() => onPurchase(bond.id)}
+          disabled={isPurchasing || bond.available === 0}
+          className="w-full bg-gradient-to-r from-purple-600 
+          to-blue-600 text-white py-3 px-4 rounded-lg 
+          hover:from-purple-700 hover:to-blue-700 transition-all 
+          duration-300 font-medium disabled:opacity-50 disabled:cursor-not-allowed
+          flex items-center justify-center gap-2">
+            {isPurchasing ? (
+              <>
+              <Loader2 className="animate-spin" size={18}/>
+              
+              <span>Processing...</span>
+              </>
+            ) : bond.available === 0 ? (
+              <span>Sold Out😟️</span>
+            ) : (
+              <>
+              <ShoppingCart size={18} />
+              <span>Purchase Bond</span>
+              </>
+            )}
+          </button>
+          <ToastContainer />
       </div>
-      <div className="bg-gray-800 rounded-lg p-3 mb-4">
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-400">Discounted amount:</span>
-          <span className="text-gray-300"></span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-purple-400">Price:$1</span>
-          <span className="text-purole-400 font-bold">${((bond.value / 0.85) - bond.value).toFixed(2)}</span>
-        </div>
-      </div>
-      <button className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3
-      px-4 rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all duration-300 font-medium">
-        Purchase Bond
-      </button>
-    </div>
-  );
+    )
+  }
 
   const renderDashboard = () => (
     <div className="space-y-6">
       <div className="grid grid-cols-1 mb:grid-cols-3 gap-6">
         <StatCard
-        title="AVAX balance"
-        value={avaxBalance ? `${parseFloat(formatEther(avaxBalance.value | polygonAmoyMatic.value | sepoliaBalance.value | anvilEthBalance.value)).toFixed(4)} AVAX` : '0 AVAX' }
+        title={avaxBalance?.symbol ? `${avaxBalance.symbol || polygonAmoyMatic.symbol || sepoliaBalance.symbol || anvilEthBalance.symbol} Balance`: 'Balance' }
+        value={avaxBalance ? `${parseFloat(formatEther(avaxBalance.value | polygonAmoyMatic.value | sepoliaBalance.value | anvilEthBalance.value)).toFixed(4)} 
+        ${avaxBalance.symbol || polygonAmoyMatic.symbol || sepoliaBalance.symbol || anvilEthBalance.symbol}` : '0 AVAX' }
         subtitle={avaxBalance ? `~$${(parseFloat(formatEther(avaxBalance.value | polygonAmoyMatic.value | sepoliaBalance.value | anvilEthBalance.value)) * 25).toFixed(2)} USD` : 'Connect wallet'}
         icon={DollarSign}
         color="blue"
@@ -302,33 +451,68 @@ const MotelSmartWallet = () => {
 
   const renderBonds = () => (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      {/**Header with Total Balance */}
+      <div className="flex justify-between items-center flex-wrap gap-4">
         <h2 className="text-2xl font-bold text-white">Arena Breakout Bonds</h2>
-        <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white
-        px-4 py-2 rounded-lg">
-          <span className="font-bold">15% Discount Activated</span>
+        {error && (
+          <div className="mb-4 bg-red-900/30 border border-red-500/50 p-4 rounded-lg duration-300">
+            <p className="text-red-300">{error}</p>
+            <ToastContainer />
+          </div>
+      )}
+      {statusBond && (
+          <div className="mb-2 bg-blue-900/30 border border-blue-500/50 p-1 rounded-lg">
+            <p className="text-blue-300">{statusBond}</p>
+          </div>
+      )}
+        {/**Elegant Balance Display */}
+        <div className="flex items-center gap-3">
+          <div className="bg-gray-800/50 backdrop-blur-sm border border-gray-700
+          rounded-lg px-4 py-2 flez items-center gap-3">
+            <div className="text-right">
+              <p className="text-xs text-gray-400">Total Bond Units</p>
+              <p className="text-lg font-bold text-blue-400">
+                {Object.values(bondBalances).reduce((a, b) => a + b, 0).toLocaleString()}
+              </p>
+            </div>
+            <Coins className="text-yellow-400" size={24}/>
+          </div>
+
+          <div className="bg-gradient-to-r from-purple-600 to-blue-600
+           text-white px-4 py-2 rounded-lg">
+            <span className="font-bold">15% Discounted Active</span>
+           </div>
         </div>
       </div>
+      {/**Bond Card Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {bonds.map(bond => (
-          <BondCard key={bond.id} bond={bond} />
+          <BondCard 
+          key={bond.id}
+          bond={bond}
+          onPurchase={handlePurchaseBond}
+          isPurchasing={purchasingBondId === bond.id}
+          balance={bondBalances[bond.id] || 0}
+          />
         ))}
       </div>
-
+      {/** Future Feature Notice */}
       <div className="bg-yellow-900/20 border border-yellow-600/30 rounded-xl p-4">
-      <div className="flex items-center space-x-3">
-        <Zap className="text-yello-400" size={24} />
-        <div>
-          <h3 className="text-yellow-400 font-semibold">future Feature: Incentive Tokens</h3>
-          <p className="text-gray-300 text-sm">
-            Earn tokens backed by withdrwal fees. Token system will launch soon once community reaches crictal mass.
-          </p>
+        <div className="flex items-center space-x-3">
+          <Zap className="text-yellow-400" size={24}/>
+          <div>
+            <h3 className="text-yellow-400 font-semibold">Future Feature: Incentive Tokens</h3>
+            <p className="text-gray-300 text-sm">
+              Earn tokens backed by withdrawal fess. Token system will launch Soon
+              once Community reaches critical mass.
+            </p>
+          </div>  
         </div>
-       </div>
       </div>
     </div>
   );
-{/** render wallet*/}
+  
+  {/** render wallet*/}
   const renderWallet = () => (
     <EnhancedWallet
       balance={balance}
@@ -341,7 +525,7 @@ const MotelSmartWallet = () => {
   )
 
   const renderAdmin = () => {
-    if (userRole !== 'admin') {
+    if (!admin) {
       return (
         <div className="text-center py-12">
           <Lock className="mx-auto text-gray-500 mb-4" size={48} />
@@ -445,7 +629,7 @@ const MotelSmartWallet = () => {
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg
               flex items-center justify-center">
-                <Image src="/motel_main.png" alt="motel_key logo" className="rounded-sm" width={100} height={100}/>
+                <Image src="/motel_main.png" alt="motel_key logo" className="rounded-sm md:h-full" width={100} height={100}/>
               </div>
               <div>
                 <h1 className="text-xl font-bold">Motel</h1>
@@ -490,6 +674,10 @@ const MotelSmartWallet = () => {
               </button>
               <div className="px-4 py-2 bg-green-600 rounded-lg">
                 <span className="text-sm font-medium">Connected</span>
+                {chain?.id !== anvil.id && (
+                  <span className="text-orange-500 
+                  text-xs font-semibold animate-pulse duration-3000 transition-all">change network:{anvil.id}</span>
+                )}
                </div>
             </div>
           </div>

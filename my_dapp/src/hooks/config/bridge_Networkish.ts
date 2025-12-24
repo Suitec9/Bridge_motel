@@ -37,6 +37,12 @@ export const Avalanche_mainnet: Networkish = {
     rpcUrl: 'https://api.avax-snowtrace.network/ext/bc/C/rpc'
 }
 
+export const Sepolia_Config: Networkish = {
+  name: 'Sepolia',
+  chainId: 11155111,
+  rpcUrl: 'https://sepolia.drpc.org'  
+}
+
 
 // Async function to check contract code length
 export async function hasZeroCodeLength(address: string, provider: ethers.providers.Provider) {

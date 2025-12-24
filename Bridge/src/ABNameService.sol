@@ -167,7 +167,7 @@ contract ABNameService is Ownable, ReentrancyGuard {
 
     /**
      * @dev Update Pricing 
-     * @audit Admin function
+     *  Admin function
      */
     function updatePricing(
         uint256 oneYear, 

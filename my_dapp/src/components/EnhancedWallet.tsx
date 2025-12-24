@@ -22,16 +22,26 @@ import {
   Loader
 } from 'lucide-react';
 import { useAccount, useBalance, usePublicClient, useReadContract, useWalletClient } from 'wagmi';
-import { arbitrumSepolia, avalanche, avalancheFuji, Chain, etherlink, hardhat, optimismSepolia, pgn, polygon, polygonAmoy, sepolia } from 'wagmi/chains';
+import { 
+  arbitrumSepolia, 
+  avalanche, 
+  avalancheFuji, 
+  Chain, 
+  etherlink, 
+  hardhat, 
+  optimismSepolia, 
+  pgn, 
+  polygon, 
+  polygonAmoy, 
+  sepolia, 
+} from 'wagmi/chains';
 import { formatEther } from 'viem/utils';
 import { eERC20ContractInterface, eERC20ZKProofGenerator, EncryptedBalance, initializeContractInterface, initializeProofGenerator } from '@/utils/zkProofInputs';
 import {ethers, utils} from "ethers"
 import { parseEther } from 'ethers/lib/utils';
-import {  CONTRACTS_ERC20, CONTRACTS_REGISTRARY, derivePublicKey, ENCRYPTED_ERC_ABI, provider,  REGISTRARY_ABI, } from '@/hooks/config/configs'
-import { DepositResult, useABWallet, WalletInfo } from '@/hooks/useABWallet';
+import {   CONTRACTS_ERC20, CONTRACTS_REGISTRARY, derivePublicKey, ENCRYPTED_ERC_ABI, provider_,  REGISTRARY_ABI, } from '@/hooks/config/configs'
+import {  useABWallet } from '@/hooks/useABWallet';
 import { hasZeroCodeLength, localConfig } from '@/hooks/config/bridge_Networkish';
-import { CONTRACT_ADDRESSES } from '../../constants/PrimeFactory';
-
 
 interface RegistrationResult {
   isRegistered: boolean;
@@ -44,6 +54,15 @@ interface AvaxBalance {
     symbol: string;
     value: bigint;
 } 
+
+interface InfoWallet {
+    walletAddress: string,
+    creationTime: string,
+    timeUntilExpiry: string,
+    isExpired: boolean,
+    bondBalance: string,
+    walletBalance: string
+}
 
 interface Balance {
   avax?: AvaxBalance ;
@@ -71,7 +90,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     const [secretKey, setSecretKey] = useState<string>('');
     const [decryptionKey, setDecryptionKey] = useState<string | null>(null);
     const [proofGenerator, setProofGenerator] = useState<eERC20ZKProofGenerator | null>(null);
-    const [contractInterface, setContractInterface] = useState<ethers.Contract | null>(null);
+    const [contractInterface, setContractInterface] = useState<eERC20ContractInterface | null>(null);
     const [loading, setLoading] = useState(false);
 
     const [zkProofStatus, setZKProofStatus] = useState<'idle' | 'generating' | 'submitting' | 'completed' | 'failed'>('idle');
@@ -86,15 +105,8 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     const [ status_Reg, setStatus_Reg] = useState<string>('');
     const [error_Reg, setError_Reg] = useState<string>('');
     const [isCreatingWallet, setIsCreatingWallet] = useState(false);
-    const [userHoldingWallet, setUserHoldingWallet] = useState<string | null>('');
-    const [ walletExpiryInfo, setWalletExpiry ] = useState<WalletInfo>({
-      walletAddress: '', 
-      creationTime: Number(0), 
-      timeUntilExpiry: Number(0), 
-      isExpired: false, 
-      bondBalance: Number(balance.bonds), 
-      walletBalance: '' 
-    })
+    const [userHoldingWallet, setUserHoldingWallet] = useState<string | undefined>('');
+    const [ walletExpiryInfo, setWalletExpiry ] = useState<InfoWallet | undefined>();
     // E-ERC20 Transaction forms
     const [transferForm, setTransferForm] = useState({ recipient: '', amount: ''});
     const [mintForm, setMintForm] = useState({ amount: ''});
@@ -127,6 +139,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       });
     const [isTransfer, setTransfer] = useState(false);
     const abWallet = useABWallet();
+    const {walletInfo, balanceOf, contracts, displayERC20balance} = abWallet;
       
       
     const [encryptedBalance] = useState<EncryptedBalance>({
@@ -142,37 +155,40 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     // eERC20 INITIALIZATION
     // ========================================================================================
 
-    const canAccessEncrypted = abWallet.userNames || provider._getAddress//abWallet.signer?.getAddress();
-
     const initializeABWalletHook = async () => {
       
-      const connectToWallet = await abWallet.connectWallet();
-      console.log("initailization of abWallet hook", connectToWallet);
+      const {account, provider, signer} = await abWallet.connectWallet();
+      console.log("initailization of abWallet hook: address:", account, 
+        "signer:", signer, "provider:", provider);
+      console.log('state initialization of wallet', abWallet.walletInfo);
 
-      return abWallet.account, abWallet.provider, abWallet.signer;
+      return {
+        account, 
+        provider, 
+        signer
+      };
     }
     
     const initializeEERC20System = async () => {
-      
-        const provider = new ethers.providers.JsonRpcProvider(localConfig.rpcUrl);//new ethers.providers.Web3Provider(window.ethereum);
-        const signer =  provider.getSigner();
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const signer =  provider.getSigner();
   
-        const auditoPublicKey: {pubKeyX: string, pubKeyY: string}  = await derivePublicKey(await loadOrGenerateSecretKey('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'));
+      const auditoPublicKey: {pubKeyX: string, pubKeyY: string}  = await derivePublicKey(await loadOrGenerateSecretKey('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'));
         
-        const generator = new eERC20ZKProofGenerator(provider, [auditoPublicKey.pubKeyX, auditoPublicKey.pubKeyY]);//await initializeProofGenerator(provider, [auditoPublicKey.pubKeyX, auditoPublicKey.pubKeyY]);
+      const generator = await initializeProofGenerator(provider, [auditoPublicKey.pubKeyX, auditoPublicKey.pubKeyY]);
        
-        console.log('generator is operational', generator);
+      console.log('generator is operational', generator);
 
-        const contract =  new ethers.Contract(CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, signer);
-        console.log('contract is initialisng', contract);    
+      const contract =  await initializeContractInterface(CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, signer, generator);
+      console.log('contract is initialisng', contract);    
 
-        if (publicClient && walletClient && address) {
+      if (publicClient && walletClient && address) {
           
-          //Initialize proof generator with audito public
-          setProofGenerator(generator);
+        //Initialize proof generator with audito public
+        setProofGenerator(generator);
             
-          // Initialize contract interface
-          setContractInterface(contract);
+        // Initialize contract interface
+        setContractInterface(contract);
       }
      
       return {publicClient, walletClient, address};
@@ -187,19 +203,25 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         initializeABWalletHook();
       }
       
-    }, [isConnected, address, proofGenerator]);
+    }, [isConnected, address, proofGenerator, initializeABWalletHook, initializeEERC20System]);
 
     const checkRegistration = async (address: string) => {
 
-      const signer =  provider.getSigner();
+      const signer =  provider_.getSigner();
       
+      console.log("address on mount:", address);
       if (!address || !publicClient) return false;
 
       setResult({ isRegistered: false, loading: true});
 
       try {
         const contracts_registrary = new ethers.Contract(CONTRACTS_REGISTRARY, REGISTRARY_ABI, signer);
-        const registrationResult: boolean =  await contracts_registrary.isUserRegistered(address);
+        
+        console.log("registrar contract check:", contracts_registrary);
+        const registrationResult =  await contracts_registrary.isUserRegistered(address);  //connect(signer)['isUserRegistered(address)'](address);
+        registrationResult === '0x0000000000000000000000000000000000000000000000000000000000000000' ?  false : 
+        
+        console.log('checking address result:', registrationResult);
         
         setResult({
           isRegistered: registrationResult,
@@ -214,6 +236,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
           error: error instanceof Error ? error.message : 'Unkown error',
           loading: false
         });
+        setIsRegisteredForEERC20(false);
         
       }
       
@@ -224,19 +247,19 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         if (address) {
             checkRegistration(address);
         }
-    }, [address]);
+    }, [address, checkRegistration]);
 
     useEffect(() => {
-      if (zkProofStatus === 'completed' && isRegisteredForEERC20) {
+      if (zkProofStatus === 'completed' && isRegisteredForEERC20 && result.isRegistered) {
         setTimeout(() => setRegistrationCollapsed(true), 2000);
       }
-    }, [zkProofStatus, isRegisteredForEERC20]);
+    }, [zkProofStatus, isRegisteredForEERC20, result.isRegistered]);
 
     const handleRegister = async () => {
       
-      const anyChainId = await provider.getNetwork();
+      const anyChainId = await provider_.getNetwork();
 
-      const canRegister = await hasZeroCodeLength(`${address}`, provider);
+      const canRegister = await hasZeroCodeLength(`${address}`, provider_);
       if (!walletClient || canRegister) return;
 
       const chainId =  anyChainId.chainId;
@@ -279,8 +302,9 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
 
         // Load encrypted balance if registered
         if (isRegistered) {
-          const encryptedBalance = await contractInterface?.getBalance(userAddress, '0x9a676e781a523b5d0c0e43731313a708cb607508')//useEncryptedBalance();
+          const encryptedBalance = await contractInterface?.getBalance(userAddress, '0x5FbDB2315678afecb367f032d93F642f64180aa3')//useEncryptedBalance();
           //setEncryptedTokenBalance(encryptedBalance);
+          console.log("encrypted Balance:", encryptedBalance);
         }
          
       } catch (error: any) {
@@ -349,8 +373,8 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         console.log('🔐️ Generating mint proof...');
         setZKProofStatus('submitting');
 
-        const signer =  provider.getSigner();
-        const anyChainId = await provider.getNetwork();
+        const signer =  provider_.getSigner();
+        const anyChainId = await provider_.getNetwork();
 
         const amount = parseEther(mintForm.amount).toString();
 
@@ -426,14 +450,14 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         setError('Contract not initialized');
         return;
       }
-      const contract =  new ethers.Contract(CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, provider.getSigner());
+      const contract =  new ethers.Contract(CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, provider_.getSigner());
       console.log("deposit function:", contract.functions);
       const abiIERC20 = new ethers.utils.Interface([
       "function approve(address spender, uint256 value)  returns (bool)",
       'function decimals() view returns (uint8)']);
     
       try {
-             const IERC20_instance = new ethers.Contract(depositTokenAddress, abiIERC20, provider.getSigner());
+             const IERC20_instance = new ethers.Contract(depositTokenAddress, abiIERC20, provider_.getSigner());
    
         const tokenDecimal = await IERC20_instance.decimals();
               console.log("decimals for tokens", tokenDecimal);
@@ -442,7 +466,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         // Generate PCT foir deposit amount
         const amountPCT = await proofGenerator.generateBalancePCT(depositAmount, (await loadOrGenerateSecretKey(`0x${address}`)));
         setZKProofStatus('generating');
-        const track_function = await contract.connect(provider.getSigner()).deposit({
+        const track_function = await contract.connect(provider_.getSigner())["deposit(uint256,address,uint256[7])"]({
           amount: bigN,
           tokenAddress: depositTokenAddress,
           amountPCT: amountPCT
@@ -457,9 +481,9 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         console.log("check transaction tx:", tx);
         setZKProofStatus('submitting');
         setStatus('Transaction submitted. Waiting for conformation...');
-        await tx.wait();
+        const txHash = await tx.wait().transactionHash.toString();
         setZKProofStatus('completed');
-        setStatus('✅️ Deposit successful!');
+        setStatus(txHash ? txHash : '✅️ Deposit successful!');
         
         setDepositTokenAddress('');
         setDepositAmount('');
@@ -470,7 +494,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         } finally {
           setLoading(false);
         }
-    }, [contractInterface, depositAmount, depositTokenAddress, proofGenerator]);
+    }, [contractInterface, depositAmount, depositTokenAddress, proofGenerator, address]);
 
     const handleEncryptedWithdraw = useCallback(async () => {
       if (!contractInterface || !secretKey) {
@@ -513,59 +537,60 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     //================= REGULAR WALLET ========================= REGULAR WALLET ======//
     ////////////////////////////////////////////////////////////////////////////////////
 
-    const formatTimeRemaining = (milliseconds: number) => {
-      const days = Math.floor(milliseconds / (24 * 60 * 60 * 1000));
-      console.log("date: day:", days);
+  const formatDetailedTimeRemaining = (seconds: number) => {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return `${days}d ${hours}h ${minutes}m`;
+  }
 
-      return days;
-    }
-
-    const getExpiryUrgency = (timeUntilExpiry: number) => {
-      const days = formatTimeRemaining(timeUntilExpiry);
-
-      if (days < 7) return { color: 'red', level: 'urgent', icon: AlertCircle};
-
-      if (days < 30) return {color: 'orange', level: 'warning', icon: Clock};
-      return { color: 'green', level: 'good', icon: CheckCircle2};
+    // Get urgency level based on days remaining
+    const getExpiryUrgency = (timeUntilExpiry: number | undefined) => {
+      if (!timeUntilExpiry) return { color: 'gray', level: 'unknown', icon: AlertCircle };
       
+      const days = formatDetailedTimeRemaining(timeUntilExpiry);
+      
+      if (Number(days) < 7) return { color: 'red', level: 'urgent', icon: AlertCircle };
+      if (Number(days) < 30) return { color: 'orange', level: 'warning', icon: Clock };
+      
+      return { color: 'green', level: 'good', icon: CheckCircle2 };
     }
-
+    
+    // Format a Unix timestamp to readable date
     const formatDate = (timestamp: number) => {
-      return new Date(timestamp).toLocaleDateString('en-US', {
+      // Multiply by 1000 to convert seconds to milliseconds for JS Date
+      return new Date(timestamp * 1000).toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'short',
-        day: 'numeric'
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
       });
     }
 
-    const initializeWalletState = async () => {
-      
+    const initializeWalletState = async () => {      
+      if (!isConnected && !address || !abWallet.contracts?.factory) return;
+      setLoading(true);
       try {
-        const info = await abWallet.fetchWalletInfo();
-        console.log("info:", info);
-        console.log("address check:", info?.walletAddress);
-        if (info?.walletAddress !== '0') {
-          setUserHoldingWallet(info?.walletAddress);
-          setWalletExpiry({
-            walletAddress: info?.walletAddress,
-            creationTime: info?.creationTime,
-            timeUntilExpiry: info?.timeUntilExpiry,
-            isExpired: info?.isExpired,
-            bondBalance: info?.bondBalance,
-            walletBalance: info?.walletBalance
-          });
-        }
+        await abWallet.fetchWalletInfo(address); 
+            
+        const info = await displayERC20balance(address);
+        console.log("display function", info);
+        
       } catch (error: any) {
         console.error("user wallet address not found:", error);
         throw new Error("wallet info undefined", error.message);
+      } finally {
+
+        setLoading(false);
       }
     }
 
-    useEffect(() => {
+    useEffect(() => { 
       if (isConnected && address) {
         initializeWalletState();
       }
-    }, [isConnected, address]);
+    }, [isConnected]);
 
     const handleCreateWallet = useCallback(async () => {
       setIsCreatingWallet(true);
@@ -574,21 +599,36 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         
         const tx = await abWallet.createWallet();
         console.log("wallet creation log:", tx);
+        
+        const txHash = (await tx.wait()).transactionHash;
+        console.log("transaction hash:", txHash);
+
+        console.log("transaction data", tx.data, "logs on chain", (await tx.wait()).logs);
+
         // k wallet creation success
-        setIsCreatingWallet(true)
-        setUserHoldingWallet(walletExpiryInfo.walletAddress);
+        setTransactionState({ isLoading: true, status: 'confirming' });
+        setIsCreatingWallet(true);
+        setUserHoldingWallet(walletExpiryInfo?.walletAddress);
+        console.log("ExpiryInfo check:", walletExpiryInfo);
         console.log('holding wallet created successfully');
-        setStatus_Reg(tx.hash);
+        setStatus_Reg(txHash ? txHash.toString() : 'wallet created successfully');
+        
+        setTransactionState({ isLoading: false, status: 'success' });
       
       } catch (error) {
         console.error('Failed to create holding wallet:', error);
+        setError_Reg(`${error ? error : undefined}`);
+
+        setTransactionState({ isLoading: false, status: 'error' });
       
       } finally {
         setIsCreatingWallet(false);
-      }
-    }, [abWallet]);
+        setTransactionState({ isLoading: false, status: 'idle' });
 
-    
+      }
+    }, [abWallet, walletExpiryInfo]);
+
+
     const handleDeposit = useCallback(async () => {
       setTransactionState({ isLoading: true, status: 'pending' });
 
@@ -598,8 +638,9 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
 
         // wait for cornfirmation
         setTransactionState({ isLoading: true, status: 'confirming' });
-        console.log("transaction:",   tx_.tx1);
-        setStatus_Reg(`${tx_.tx1 ? tx_.tx1 : 'deposit successful'}`);
+        console.log("transaction:",   tx_);
+        const txHash =  tx_.tx1;
+        setStatus_Reg(txHash ? txHash.toString() : 'Deposit succesful');
         setTransactionState({ isLoading: false, status: 'success' });
 
         setDepositAddressToken('');
@@ -612,11 +653,9 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         setTransactionState({ isLoading: false, status: 'error' });
         
       } finally {
-        setTransactionState({ isLoading: false, status: 'idle' });
-        
         setError(`${error ? error : ''}`); 
       }
-    }, [abWallet, depositAmount_Reg, depositAddressToken]);
+    }, [abWallet, depositAmount_Reg, depositAddressToken, error]);
     
     const handleTransfer = useCallback(async () => {
       
@@ -630,7 +669,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       } finally {
         setTransfer(false);
       }
-    }, [tokenAddress, amount.transferAmount, amount.transferAmount, abWallet]); 
+    }, [tokenAddress, amount.transferAmount, abWallet, amount.recipient]); 
 
     const handleWithdraw = useCallback(async () => {
 
@@ -661,8 +700,13 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     };
 
 
-    const copyToClipBoard = (text: string) => {
-      navigator.clipboard.writeText(text);
+    const copyToClipBoard = (text: string | undefined) => {
+      setLoading(true);
+      if (text) {
+        navigator.clipboard.writeText(String(text));
+      }
+      setLoading(false);
+      
     }
 
     if (!isConnected) {
@@ -673,17 +717,38 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
             );
     };
 
-    const renderHoldingWalletCard = () => {
-      if (!walletExpiryInfo.walletAddress) return null;
+    const 
+    renderHoldingWalletCard = () => {
 
-     
-      const urgency = getExpiryUrgency(walletExpiryInfo.timeUntilExpiry);
-      const daysRemaininig = formatTimeRemaining(walletExpiryInfo.timeUntilExpiry);
-      const expiryDate = new Date(Date.now() + walletExpiryInfo.timeUntilExpiry);
-      const creationDate = new Date(walletExpiryInfo.creationTime);
-      const progress = ((90 - daysRemaininig) / 90 ) * 100;
+      const {walletInfo} = abWallet;
+      
+
+      console.log("walletExpiryInfo:", walletInfo);
+      console.log("address of user:", walletInfo?.walletAddress);
+      console.log("creation time of address:", walletInfo?.creationTime);
+    //  if (!walletInfo?.walletAddress) return null;
+      const urgency = getExpiryUrgency(walletInfo?.timeUntilExpiry);
+      // Days remaining (timeUntilExpiry is already in seconds)
+      const daysRemaining = Math.floor(Number(walletInfo?.timeUntilExpiry) / 86400);
+      console.log("days remaining:", daysRemaining);
+      
+      // Calculate actual expiry date (creation time + duration)
+      const creationTime = Number(walletInfo?.creationTime); // Unix timestamp in seconds
+      const expiryTimestamp = creationTime + Number(walletInfo?.timeUntilExpiry); // Add duration to creation time
+      console.log("expiryTimestamp", expiryTimestamp);
+      const expiryDate = new Date(expiryTimestamp * 1000); // Convert to milliseconds
+      console.log("expiry date:", expiryDate.toDateString());
+      
+      // Creation date
+      const creationDate = new Date(creationTime * 1000);
+      console.log("creation date:", creationDate.toDateString());
+      
+      // Progress (how much of the 90 days has passed)
+      const progress = ((90 - daysRemaining) / 90) * 100;
+      console.log("progress:", progress.toFixed(2) + "%");
 
       return (
+       walletInfo?.walletAddress && walletExpiryInfo?.walletAddress && userHoldingWallet && (
         <div className={`sticky top-0 z-10 bg-gradient-to-br ${
           urgency.level === 'urgent' ? 'from-red-900/30 to-red-800/30 border-red-500/50' :
           urgency.level === 'warninig' ? 'from-orange-900/30 to-orange-800/30 border-orange-500/50' :
@@ -717,18 +782,20 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
             <p className='text-gray-400 text-sm'>Address:</p>
             <div className='flex items-center space-x-2'>
               <button 
-               onClick={() => copyToClipBoard(walletExpiryInfo.walletAddress)}
+               onClick={() => copyToClipBoard(walletInfo?.walletAddress)}
                className='p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-gray-300
                hover:text-white transition-colors'>
-                <Copy size={14} />
-              </button>
+                {!loading ? (
+                  <Copy size={14} />
+                ) : <AlertCircle className='bg-green animate-pulse'/> }
+                </button>
               <button className='p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-gray-300
               hover:text-white transition-colors'>
                 <ExternalLink size={14}/>
               </button>
             </div>
            </div>
-           <p className='text-white font-mono text-sm break-all'>{walletExpiryInfo.walletAddress}</p>
+           <p className='text-white font-mono text-sm break-all'>{walletInfo?.walletAddress}</p>
           </div>
 
           <div className='grid grid-cols-2 gap-4 mb-3'>
@@ -737,7 +804,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
               <Calendar size={14} className='text-gray-400' />
               <p className='text-gray-400 text-xs'>Created</p>
              </div>
-              <p className='text-white text-sm font-medium'>{formatDate(Number(creationDate.toDateString))}</p>
+              <p className='text-white text-sm font-medium'>{formatDate(Number(walletInfo?.creationTime))}</p>
             </div>
 
             <div className='bg-gray-800/50 rounded-lg p-3'>
@@ -751,13 +818,13 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
               urgency.level === 'urgent' ? 'text-red-400' :
               urgency.level === 'warning' ? 'text-orange-400' :
               'text-green-400'
-             }`}>{formatDate(Number(expiryDate.toDateString))}</p>
+             }`}>{formatDate(Number(walletInfo?.creationTime) + Number(walletInfo?.timeUntilExpiry))}</p>
             </div>
           </div>
 
           <div className='mb-2'>
             <div className='flex items-center justify-between mb-2'>
-              <span className='text-white text-sm font-medium'>{(daysRemaininig)} days remaining</span>
+              <span className='text-white text-sm font-medium'>{(daysRemaining)} days remaining</span>
               <span className='text-green-900 text-xs'>{progress.toFixed(0)}% elapsed</span>
             </div>
             <div className='w-full bg-gray-700 rounded-full h-2'>
@@ -781,11 +848,13 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
             {urgency.level === 'good' && '✅️ Wallet is active and in good standing'}
           </p>
         </div>
+      
+       )
       )
     }
 
     const renderRegistrationPanelProminent = () => {
-      if (isRegisteredForEERC20 && registrationCollapsed) {
+      if (!isRegisteredForEERC20 && registrationCollapsed && !result.isRegistered) {
         return (
           <div className='bg-gradient-to-br from-green-900/20 to-emerald-900/20
           rounded-xl p-4 border border-green-500/30 mb-6'>
@@ -909,8 +978,9 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       );
      }
 
-    const renderEncryptedActions = () => (
-      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 
+    const renderEncryptedActions = () => {
+      isRegisteredForEERC20 && result.isRegistered ? (
+        <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 
       border border-gray-700">
         <h3 className="text-xl font-bold text-white mb-4 flex items-center">
           <Lock className="mr-2 text-green-400" size={20} />
@@ -1121,7 +1191,8 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         </div>
       </div>
     </div>
-    );
+      ) : renderRegistrationPanelProminent()
+    };
 
     const renderRegularActions = () => (
     <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 border border-gray-700">
@@ -1168,14 +1239,14 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
           />
           <button
            onClick={handleDeposit}
-           disabled={transactionState.status !== 'idle' || depositAmount_Reg === '0' || !depositTokenAddress}  
+           disabled={transactionState.status !== 'idle'  || !depositAddressToken}  
            className={`w-full py-3 px-4 rounded-lg transition-all
-           duration-300 font-medium ${!transactionState.isLoading || !depositAmount_Reg || 
-            !depositTokenAddress  ? 'bg-green-600 hover:bg-green-700 text-white'
+           duration-300 font-medium ${!transactionState.isLoading ||
+            !depositAddressToken  ? 'bg-green-600 hover:bg-green-700 text-white'
             : 'bg-gray-700 text-gray-400 cursor-not-allowed'
            }`}
            >
-             {transactionState.isLoading ? (
+            {transactionState.isLoading ? (
               <div className="flex items-center">
                 <Loader2 className={`size-10 md:size-5 ${
                   transactionState.status === 'pending' 
@@ -1235,7 +1306,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
 
         <button onClick={handleWithdraw} disabled={!walletExpiryInfo}
               className={`w-full py-3 px-4 rounded-lg transition-all duration-300 font-medium
-                ${!walletExpiryInfo
+                ${walletExpiryInfo?.walletAddress
                   ? 'bg-orange-600 hover:bg-orange-700 text-white'
                   : 'bg-gray-700 text-gray-400 cursor-not-allowed'
                 }`}
@@ -1247,6 +1318,22 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
   );
 
   const renderBalanceOverviewEnhanced = () => {
+    
+    console.log("balanceOf wallet:", balanceOf, "balance:", balanceOf?.value);
+    
+    const daysRemaining = Math.floor(Number(walletInfo?.timeUntilExpiry) / 86400);
+      console.log("days remaining calculation!!!:", daysRemaining );
+      
+    // Calculate actual expiry date (creation time + duration)
+    const creationTime = Number(walletInfo?.creationTime); // Unix timestamp in seconds
+    const expiryTimestamp = creationTime + Number(walletInfo?.timeUntilExpiry); // Add duration to creation time
+    const expiryDate = new Date(expiryTimestamp * 1000); // Convert to milliseconds
+    console.log("expiry date:", expiryDate.toDateString());
+      
+    // Creation date
+    const creationDate = new Date(creationTime * 1000);
+    console.log("creation date:", creationDate.toDateString());
+      
     return (
 
     <div className='bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl
@@ -1257,11 +1344,11 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       </h3>
       <div className='space-y-4'>
         <div className='flex justify-between items-center py-2 border-b border-gray-700'>
-          <span className='text-gray-400'>{`${avaxBalance?.symbol || anvilETH?.symbol || sepoliaETH?.symbol || polygonAmoyMatic?.symbol}` || 'AVAX BAlance'}</span>
+          <span className='text-gray-400'>{ balanceOf?.symbol || avaxBalance?.symbol || anvilETH?.symbol || sepoliaETH?.symbol || polygonAmoyMatic?.symbol || 'AVAX Balance'}</span>
           <span className='text-white font-medium'>
-            {walletExpiryInfo.walletBalance ? `${
-              parseFloat(formatEther(BigInt(walletExpiryInfo.walletBalance))).toFixed(4)
-            } ${avaxBalance?.symbol || anvilETH?.symbol || sepoliaETH?.symbol || polygonAmoyMatic?.symbol}` : 'N/A'}
+            {balanceOf?.value ? (
+              formatEther(BigInt(balanceOf.value)) 
+            ) : 'N/A'}
           </span>
         </div>
         <div className='flex justify-between items-center py-2 border-b 
@@ -1280,7 +1367,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
           </div>
         )}
         {/** Wallet Expiry Info */}
-        { walletExpiryInfo.walletAddress && (
+        { walletInfo?.walletAddress && (
           <div className='mt-4 pt-4 border-t border-gray-700'>
             <div className='bg-gray-800/50 rounded-lg p-4'>
              <div className='flex items-center justify-between mb-2'>
@@ -1292,21 +1379,21 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
              <div className='space-y-2 text-sm'>
               <div className='flex justify-between'>
                 <span className='text-gray-400'>Created:</span>
-                <span className='text-white'>{walletExpiryInfo.creationTime}</span>
+                <span className='text-white'>{formatDate(creationTime)}</span>
               </div>
               <div className='flex justify-between'>
                 <span className='text-gray-400'>Expires:</span>
-                <span className={`font-medium ${getExpiryUrgency(walletExpiryInfo.timeUntilExpiry).level
-                  === 'urgent' ? 'text-red-400' : getExpiryUrgency(walletExpiryInfo.timeUntilExpiry).level
+                <span className={`font-medium ${getExpiryUrgency(walletInfo.timeUntilExpiry).level
+                  === 'urgent' ? 'text-red-400' : getExpiryUrgency(walletInfo.timeUntilExpiry).level
                   === 'warning' ? 'text-orange-400' : 'text-green-400'
-                }`}>{formatDate(Date.now() + walletExpiryInfo.timeUntilExpiry)}</span>
+                }`}>{formatDate(walletInfo.timeUntilExpiry + creationTime)} exp</span>
               </div>
               <div className='flex justify-between'>
                 <span className='text-gray-400'>Days Remaining:</span>
-                <span className={`font-bold ${getExpiryUrgency(walletExpiryInfo.timeUntilExpiry).level
-                  === 'urgent' ? 'text-red-400' : getExpiryUrgency(walletExpiryInfo.timeUntilExpiry).level
+                <span className={`font-bold ${getExpiryUrgency(walletInfo.timeUntilExpiry).level
+                  === 'urgent' ? 'text-red-400' : getExpiryUrgency(walletInfo.timeUntilExpiry).level
                   === 'warning' ? 'text-orange-400' : 'text-green-400'
-                }`}>{formatTimeRemaining(walletExpiryInfo.timeUntilExpiry)} Days</span>
+                }`}>{formatDetailedTimeRemaining(Number(walletInfo.timeUntilExpiry))} days</span>
               </div>
              </div>
             </div>
@@ -1324,17 +1411,32 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
   return (
     <div className="space-y-6">
         {/** Access setup section */}
-        {isConnected && canAccessEncrypted && !isCreatingWallet && walletExpiryInfo &&(
+        {isConnected && address && !walletExpiryInfo?.walletAddress && 
+        !walletInfo?.walletAddress &&(
             <div className="bg-gradient-to-br from-yellow-900/20 to-orange-900/20
             rounded-xl p-6 border-yellow-500/30">
                 <h3 className="text-xl font-bold text-white mb-4">Get Started</h3>
                 <p className="text-gray-300 mb-4">Create a holding wallet or register a name access all features:</p>
                 <div className="flex gap-3">
                     <button 
-                    onClick={handleCreateWallet} disabled={isCreatingWallet}
+                    onClick={handleCreateWallet} disabled={transactionState.isLoading}
                     className="flex bg-blue-600 hover:bg-blue-700 text-white py-2
                     px-4 rounded-lg transtition-all duration-300 font-medium disabled:bg-gray-200">
-                        Create Holding Wallet
+                    {transactionState.isLoading ? (
+                        <div className="flex items-center">
+                          <Loader2 className={`size-10 md:size-5 ${
+                            transactionState.status === 'pending' 
+                            ? 'animate-spin duration-500' 
+                            : 'animate-pulse'
+                            }`} />
+                            <span className="ml-2">\
+                              {transactionState.status === 'pending' && 'Initiating'}
+                              {transactionState.status === 'confirming' && 'Confirming'}
+                            </span>
+                          </div>
+                        ) : (
+                          'Create Holding Wallet'
+                        )}
                     </button>
                 </div>
             </div>
@@ -1343,10 +1445,10 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         {/**Sticky Holding Wallet Info Card */}
       {renderHoldingWalletCard()}
         {/** Regular Wallet Operations - Always visible when has access*/}
-        {canAccessEncrypted && renderRegularActions()}
+        {address && renderRegularActions()}
 
         {/**Motel Smart Wallet Section */}
-        {canAccessEncrypted && (
+        {address && (
           <>
           {!isRegisteredForEERC20 || !registrationCollapsed ?
           renderRegistrationPanelProminent() : null}
@@ -1354,10 +1456,10 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
           </>
         )}
         {/**Balance Overview - Enhanced with expiry */}
-        {canAccessEncrypted && renderBalanceOverviewEnhanced()}
+        {address && renderBalanceOverviewEnhanced()}
         
         { /** Recent Transactions */}
-        {canAccessEncrypted && (
+        {address && (
           <div className='bg-gradient-to-br from-gray-900 to-gray-800
           rounded-xl p-6 border border-gray-700'>
             <h3 className='text-xl font-bold text-white mb-4 '>Recent Transaction</h3>
