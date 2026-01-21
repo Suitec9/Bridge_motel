@@ -1,10 +1,10 @@
 
-import {  debounce } from "@/hooks/config/configs";
+import {  debounce, provider_ } from "@/hooks/config/configs";
 import { useABWallet, UserNames } from "@/hooks/useABWallet";
 import { BigNumber, ethers } from "ethers";
 import { parseEther } from "ethers/lib/utils";
 import { AlertCircle, CheckCircle2, FileText, Key, Loader2, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "react-toastify";
 import { formatEther } from "viem";
 import { useAccount } from "wagmi";
@@ -19,7 +19,7 @@ export const NameService = () => {
     const [nameState, setNameState] = useState<string>('');
     const [nameToRenew, setNameToRenew] = useState<string>('');
     const [nameToRegister, setNameToRegister] = useState<string>('');
-    const [nameInfo_, setNameInfo] = useState(null);
+    
     //const [userNames, setUserNames] = useState(['ab.motel.avax', 'gamer123.motel.avax']);
     const [isRegisteringName, setIsRegisteringName] = useState(false);
     const [error, setError] = useState<string>('');
@@ -62,6 +62,10 @@ export const NameService = () => {
         step: 'input' as 'input' | 'duration' | 'confirm'
     });
 
+    // UI: toggle to show all names for the current owner
+    const [showOwnerNames, setShowOwnerNames] = useState<boolean>(false);
+    const [selectedOwnerName, setSelectedOwnerName] = useState<string | null>(null);
+
     const [nameRegistration, setNameRegistration] = useState({
         name: '',
         duration: 1 as 0 | 1 | 3, // Type guard ensures only valid values
@@ -73,11 +77,13 @@ export const NameService = () => {
     const [isSearching, setIsSearching] = useState(false);
     
     const { 
+        account,
         contracts, 
         connectWallet, 
         registerNameService, 
         checkNamesAvailability,
         renewName,
+        expireName,
         nameInfo,
         getNameInfo,
         getUserNames, 
@@ -89,57 +95,68 @@ export const NameService = () => {
      console.log("contracts:", contracts);
      console.log("check name:", checkNamesAvailability);
      console.log("name details:", nameDetails);
+     console.log("pricing:", pricing);
+     console.log("name details: exp:", nameInfo?.expirytime);
 
-     const {isConnected, address} = useAccount();
+    const {isConnected, address} = useAccount();
+
+    const ownerNamesList = useMemo(() => {
+        if (!nameInfo?.owner || !nameDetails) return [] as any[];
+
+        const ownerAddr = nameInfo.owner.toLowerCase();
+
+        return Array.from(nameDetails.entries())
+            .map(([name, details]: any) => ({ name, ...details }))
+            .filter((d: any) => (d.owner || '').toLowerCase() === ownerAddr)
+            .map((d: any) => ({
+                name: d.name,
+                owner: d.owner,
+                isPermanent: d.isPermanent,
+                isExpired: d.isExpired,
+                // expiryTime may be BigNumber or number
+                expirytime: d.expiryTime && (d.expiryTime.toNumber ? d.expiryTime.toNumber() : Number(d.expiryTime))
+            }));
+    }, [nameInfo, nameDetails]);
 
     const initializeUseABWallet = useCallback(async () => {
         try {
         console.log('🚀️ Initializing useABWallet hook...')    
         const connectToWallet = await connectWallet();
+        console.log("connect contracts nameservice address:", contracts?.nameService.connect(connectToWallet.signer).address);
         console.log("initailization of abWallet hook", connectToWallet.account);
-     
+ 
+        console.log("userNames:", userNames);
+        
         console.log('✅️ useABWallet initialized successfully');
         } catch (error: any) {
         console.error('❌️ useABWallet initialization failed:', error);
         }
     }, []);
      
-    const getNames = async() => {
-        if (!isConnected && !address) return;
-
-        await getUserNames(`${address}`);
-        console.log("userNames:", userNames)
-    }
-
     const namePricing = async() => {
-        if (!contracts?.nameService) return;
+        if (!contracts?.nameService && !pricing) return;
 
-        const {oneYear, threeYear, permanent} = await fetchNamePrices();
-        setDefaultPricing({oneYear, threeYear, permanent})
+        await fetchNamePrices();
+        //setDefaultPricing({oneYear, threeYear, permanent})
         
         console.log("pricing....", pricing);
-        console.log("pricing tier one:", pricing?.oneYear, "tier three",pricing?.threeYear);
+        console.log("pricing tier one:", pricing?.oneYear, "tier three", pricing?.threeYear);
         console.log("top tier:", pricing?.permanent);
-        console.log("tier one:", formatEther(BigInt(oneYear)));
-        console.log("three year:", formatEther(BigInt(threeYear)), "permanent:", formatEther(BigInt(permanent)));
+        console.log("tier one:", formatEther(BigInt(Number(pricing?.oneYear))));
+        console.log("three year:", formatEther(BigInt(Number(pricing?.threeYear))), "permanent:", formatEther(BigInt(Number(pricing?.permanent))));
 
-        return {oneYear, threeYear, permanent}
+     //   return {oneYear, threeYear, permanent}
     }
 
     useEffect(() => {
         console.log("is initializing", initializeUseABWallet());
-    }, []); 
+     
+    }, [ contracts?.nameService]); 
 
-    useEffect(() => {
-      if (!contracts?.nameService) return
-      console.log("fetch prices on mount", namePricing());
-      getNames();
-         
-    }, []);
 
     // Price calculation with type safety
     const calculatePrice = (duration: 0 | 1 | 3): number => {
-        //const {oneYear, threeYear, permanent} = await  namePricing()
+        namePricing()
         const prices = {
             0: defaultPricing.permanent,
             1: defaultPricing.oneYear,
@@ -359,6 +376,35 @@ export const NameService = () => {
             setLoading(false);
         }
     }, [contracts?.nameService]);
+
+    const handleNameInfo = useCallback(async(name: string) => { 
+        if (!contracts?.nameService) return;
+        try {
+            await getNameInfo(name);
+            console.log("name info retrieved:", nameInfo);
+            console.log("isExpired:", nameInfo?.isExpired);
+            console.log("fetched name info:", nameInfo);
+            console.log("expiry time:", nameInfo?.expirytime);
+            console.log("isPermanent:", nameInfo?.isPermanent);
+        } catch (error: any) {
+            console.error("failed to get name info:", error);
+        }
+    }, [contracts?.nameService, nameInfo]);
+
+    const handleExpireName = useCallback(async(name: string) => {
+        if (!contracts?.nameService && nameInfo?.isPermanent && !nameInfo?.isExpired) return;
+        console.log("contracts provider:", contracts?.nameService.provider);
+        console.log("nameInfo check:", nameInfo?.expirytime);
+        setLoading(true);
+
+        try {
+            await expireName(name);
+        } catch (error: any) {
+            console.error("failed to expire name:", error);
+            throw new Error("expire name failed", error.mesaage);
+        }
+        setLoading(false);
+    }, [contracts?.nameService, nameInfo]);
 
     // Open renewal modal
     const openRenewalModal = (name: string, originalDuration?: number) => {
@@ -771,45 +817,55 @@ export const NameService = () => {
             </div>
 
             {/** Your Name */}
-
-            {userNames.length > 0 && (
-                <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 border
-            border-gray-600">
-                <h3 className="text-xl font-bold text-white mb-4">Your Names</h3>
-                <div className="space-y-3">
-                    {userNames.map((name: string, idx:any ) => (
-                        <div key={idx} className="bg-gray-800 rounded-lg p-4">
-                            <div className="flex justify-between items-center mb-3">
-                                <span className="text-white font-medium">{name}</span>
-                                <span className={`text-sm ${nameInfo?.isExpired  
-                                    ? 'text-red-400'
-                                    :'text-green-400'
-                                }
-                                    `}>{memoizedNameActivity}</span>
-                            </div>
-                            <div className="flex gap-2">
-                                <button className="flex-1 bg-blue-600 hover:bg-blue-700
-                                text-white py-2 px-3 rounded text-sm transition-colors">
-                                    Get Info
-                                </button>
-                                <button onClick={() => openRenewalModal(name, /**if you have it */)} 
-                                className="flex-1 bg-purple-600 hover:bg-purple-700
-                                text-white py-2 px-3 rounded text-sm transition-colors">
-                                    Renew
-                                </button>
-                                <button className="flex-1 bg-orange-600 hover:bg-orange-700 
-                                text-white py-2 px-3 rounded text-sm transition-colors">
-                                    Expire name
-                                </button>
-                            </div>
-                            <p className="text-gray-400 text-xs mt-2">Expires: {
-                            nameInfo?.expirytime ? formatDate(nameInfo.expirytime * 1000) : 'N/A'}</p>
-                        </div>
-                    ))}
+            {userNames && userNames.length > 0 && (
+                <div className="bg-linear-to-br from-gray-900 to-gray-800 rounded-xl 
+                p-6 border border-gray-600">
+                    <h3 className="text-xl font-bold text-white mb-4">Your Registered Names</h3>
+                    <div className="space-y-3">
+                        {userNames.map((name, idx) => {
+                            const details = nameDetails.get(name);
+                            const expiryDate = details?.expiryTime
+                                ? formatDate(Number(details.expiryTime))
+                                : 'Loading...';
+                            const isExpired = details?.isExpired ?? false;
+                            return (
+                                <div key={idx} className="bg-gray-800 rounded-lg p-4">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <span className="text-white font-medium font-mono">{name}</span>
+                                        <span className={`text-sm px-2 py-1 rounded ${
+                                            isExpired
+                                            ? 'bg-red-500/20 text-red-400'
+                                            : 'bg-green-500/20 text-green-400'
+                                        }`}>
+                                            {isExpired ? 'Expired' : 'Active'}
+                                        </span>
+                                    </div>
+                                    <div className="flex gap-2 mb-3">
+                                            <button
+                                                onClick={() => openRenewalModal(name, duration)}
+                                                disabled={isExpired}
+                                                className="flex-1 bg-purple hover:bg-purple-700 disabled:bg-gray-700
+                                                disabled:cursor-not-allowed text-white py-2 px-3 rounded text-sm 
+                                                transition-colors">
+                                                    Renew
+                                            </button>
+                                            <button
+                                                onClick={() => handleExpireName(name)}
+                                                className="flex-1 bg-orange-600 hover:bg-orange-700 trext-white
+                                                py-2 px-3 rounded text-sm transition-colors">
+                                                    Expire
+                                            </button>
+                                    </div>
+                                    <p className="text-gray-400 text-xs">
+                                        {isExpired ? 'Expired on:' : 'Expires on:'} {expiryDate}
+                                    </p>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
-            </div>
             )}
-
+            
             {userNames && userNames.length === 0 && (
                 <div className="bg-gray-800/50 rounded-xl p-8 border border-gray-700
                 text-center">
@@ -937,6 +993,7 @@ export const NameService = () => {
             <div className="bg-linear-to-br from-gray-900 to-gray-800
             rounded-xl p-6 border border-gray-700">
                 <h3 className="text-xl font-bold text-white mb-4">Name information</h3>
+
                 <div className="bg-gray-800 rounded-lg p-4">
                     {nameSearch}{nameAvailablity.rawResult ? (
                         <div className={`
@@ -951,6 +1008,67 @@ export const NameService = () => {
                     {nameState && (
                         <div className="mb-2 bg-blue-900/30 border border-blue-500/50 p-1 rounded-lg">
                             <p className="text-blue-300">{nameState}</p>
+                        </div>
+                    )}
+                    {nameInfo && (
+                        <div className="mt-4 space-y-2">
+                            <div className="flex justify-between items-center">
+                                <span className="text-gray-400">Owner:</span>
+                                <span className="text-white font-mono text-sm">{nameInfo.owner}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-gray-400">Permanent:</span>
+                                <span className={`font-semibold ${nameInfo.isPermanent ? 'text-green-400' : 'text-red-400'}`}>
+                                    {nameInfo.isPermanent ? 'Yes' : 'No'}
+                                </span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-gray-400">Expired:</span>
+                                <span className={`font-semibold ${nameInfo.isExpired ? 'text-red-400' : 'text-green-400'}`}>
+                                    {nameInfo.isExpired ? 'Yes' : 'No'}
+                                </span>
+                            </div>
+                            {!nameInfo.isPermanent && (
+                                <div className="flex justify-between items-center">
+                                    <span className="text-gray-400">Expiry Date:</span>
+                                    <span className="text-white font-mono text-sm">
+                                        {nameInfo?.expirytime ?
+                                        formatDate(Number(nameInfo.expirytime))
+                                        : 'N/A'}
+                                    </span>
+                                </div>
+                            )}
+
+                            {ownerNamesList.length > 1 && (
+                                <div className="mt-3">
+                                    <button
+                                        onClick={() => setShowOwnerNames(prev => !prev)}
+                                        className="text-sm text-purple-300 hover:underline"
+                                    >
+                                        {showOwnerNames ? 'Hide' : `Show all names for owner (${ownerNamesList.length})`}
+                                    </button>
+
+                                    {showOwnerNames && (
+                                        <div className="mt-2 space-y-2 bg-gray-900 rounded p-2">
+                                            {ownerNamesList.map((n: any) => (
+                                                <div key={n.name} className={`flex items-center justify-between p-2 rounded hover:bg-gray-800 cursor-pointer ${selectedOwnerName === n.name ? 'border border-purple-500' : 'border border-transparent'}`}
+                                                    onClick={async () => { setSelectedOwnerName(n.name); await handleNameInfo(n.name); }}
+                                                >
+                                                    <div>
+                                                        <div className="text-white font-semibold">{n.name}.motel</div>
+                                                        <div className="text-gray-400 text-xs">
+                                                            {n.isPermanent ? 'Permanent' : (n.isExpired ? 'Expired' : 'Active')}
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-right text-gray-300 text-xs">
+                                                        {!n.isPermanent && n.expirytime ? formatDate(Number(n.expirytime)) : '--'}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>

@@ -45,9 +45,10 @@ export const Sepolia_Config: Networkish = {
 
 
 // Async function to check contract code length
-export async function hasZeroCodeLength(address: string, provider: ethers.providers.Provider) {
+export async function hasZeroCodeLength(address: string | null, provider: ethers.providers.Provider) {
   try {
-    const code = await provider.getCode(address);
+    console.log("address of EOA/smart_contract:", address);
+    const code = await provider.getCode(address!);
     return code.length === 2; // "0x" is length 2 for empty contract
   } catch (error) {
     console.error("Error checking contract code:", error);

@@ -72,7 +72,7 @@ interface WithdrawResult {
 
 interface TransferResult {
   tx1: ethers.ContractTransaction;
-}
+} 
 
 interface ConnectionResult {
   provider: ethers.providers.Provider;
@@ -87,7 +87,7 @@ interface Pricing {
 }
 
 export const useABWallet = () => {
-  const [provider, setProvider] = useState<ethers.providers.Web3Provider | null>(null);
+  const [provider, setProvider] = useState<ethers.providers.JsonRpcProvider | null>(null);
   const [signer, setSigner] = useState<ethers.Signer | undefined>(undefined);
   const [account, setAccount] = useState<string | null>(null);
   const [contracts, setContracts] = useState<Contracts_motel>();
@@ -123,9 +123,7 @@ export const useABWallet = () => {
        
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
       console.log("accounts [0]", accounts);
-      const _provider = new ethers.providers.Web3Provider(window.ethereum); // I am getting error here, 
-      // "call exception" the checknameavailable function revert withs failed to create provider
-
+      const _provider = new ethers.providers.JsonRpcProvider(localConfig.rpcUrl); 
       const chainId = await _provider.getNetwork().then(network => network.chainId);
       console.log("connected to chainId:", chainId);
 
@@ -153,7 +151,7 @@ export const useABWallet = () => {
   }, []);
 
   useEffect(() => {
-
+  
     if (provider && signer && account) {
       console.log("check account on initialization", account);
       // Initialize Contracts
@@ -188,6 +186,29 @@ export const useABWallet = () => {
     }
   }, [provider, signer, account]);
 
+  useEffect(() => {
+    if (window.ethereum) {
+      window.ethereum.on('accountsChanged', (accounts: string[]) => {
+        console.log("accounts changed:", accounts);
+        if (accounts.length > 0) {
+          // Re-run connection logic
+          connectWallet();
+        } else {
+          // Handle disconnection
+          setAccount(null);
+          setProvider(null);
+          setSigner(undefined);
+          setContracts(undefined)
+        }
+      });
+  }
+  return () => {
+    if (window.ethereum && window.ethereum.removeListener) {
+      window.ethereum.removeListener('accountsChanged', () => {});
+    }
+  };
+  }, [connectWallet]);
+
   // Fetch wallet information
   const fetchWalletInfo = useCallback(async (address: string | undefined): Promise<any> => {
     if (!contracts?.factory  || !account) return;      
@@ -195,14 +216,15 @@ export const useABWallet = () => {
     console.log("logging signer:",  contracts?.factory.signer);
     console.log("logging account:", account);
     console.log("logging contract address: factory:", contracts.factory.address);
+    console.log("logging signer address:", (await connectWallet()).signer.getAddress());
 
     setLoading(true);
 
     try {  
-      const connectContract = contracts.factory.connect((await connectWallet()).signer);
-      const gasCostEstimate = await connectContract.estimateGas.getWalletInfo(account);
+    //  const connectContract = contracts.factory.getWalletInfo(account);
+      //const gasCostEstimate = await connectContract.estimateGas.getWalletInfo(account);
    
-      console.log("gas estimate for getWalletInfo:", gasCostEstimate.toString());
+      //console.log("gas estimate for getWalletInfo:", gasCostEstimate.toString());
       const {
         wallet,
         creationTime,
@@ -211,7 +233,8 @@ export const useABWallet = () => {
         bondBalance,
         walletHoldingBalance
 
-      } = await connectContract.callStatic.getWalletInfo(account);
+      } = await contracts.factory.getWalletInfo(account);
+      if (creationTime.toNumber() === 0) return;
       console.log("address mount check:", address);
       console.log("account set up:", account);
 
@@ -271,12 +294,9 @@ export const useABWallet = () => {
     }
   }, [contracts?.factory, abiIERC20]);
 
-  const fetchNamePrices = useCallback(async():Promise<{
-    oneYear: number, 
-    threeYear: number, 
-    permanent: number}> => {
+  const fetchNamePrices = useCallback(async():Promise<any> => {
 
-    if (!contracts?.nameService) undefined;
+    if (!contracts?.nameService) return;
 
     try {
       const {
@@ -284,7 +304,7 @@ export const useABWallet = () => {
         threeYear, 
         permanent, 
         isActive 
-      } = await contracts?.nameService.connect((await connectWallet()).signer).callStatic.pricing();
+      } = await contracts?.nameService.connect((await connectWallet()).signer).callStatic.getPricing();
 
       console.log("fetch data check:", setPricing({
         oneYear: Number(oneYear),
@@ -311,7 +331,7 @@ export const useABWallet = () => {
     } finally {
       setLoading(false);
     }
-  }, [contracts?.nameService]);
+  }, [loading, contracts?.nameService]);
 
   // Memoize to prevent unnecessary re-renders
   const memoizedFetchWalletInfo = useCallback(
@@ -471,13 +491,16 @@ export const useABWallet = () => {
     console.log("logging signer for name availability:", contracts?.nameService.signer);
     console.log("logging account for name availability:", account);
     console.log("logging contract address:", contracts.nameService.address);
+    console.log("logging the contract code:", contracts.nameService.interface.format(utils.FormatTypes.full).length);
+    console.log("code:", (await provider?.getCode(contracts?.nameService.address))?.length);
+    console.log("check or refreash pricing:", await fetchNamePrices());
     setLoading(true);
     
     try {
       console.log("check provider and contract:", contracts?.nameService);
       const connectContract = contracts?.nameService.connect((await connectWallet()).signer);
       console.log("connected contract:", connectContract);
-      const tx = await connectContract.checkNameAvailable(name);
+      const tx = await connectContract.callStatic.checkNameAvailable(name);
 
       console.log("name searcher check:", await tx);
 
@@ -492,7 +515,7 @@ export const useABWallet = () => {
     } finally {
       setLoading(false);
     }
-  }, [contracts?.nameService]);
+  }, [contracts?.nameService, signer]);
 
   const getNameInfo = useCallback(async (
     names: string
@@ -521,14 +544,20 @@ export const useABWallet = () => {
   const getUserNames = useCallback(async (
     address: string
   ):Promise<string[]> => {
-    if (!contracts?.nameService || !address || !account) {
+    console.log("callstatic get user names:", contracts?.nameService.address);
+    console.log("provider of contract;", contracts?.nameService.provider);
+    console.log("signer for contract:", contracts?.nameService.signer.getAddress());
+    console.log("get network:", await contracts?.nameService.signer.getChainId());
+    console.log("get code:", contracts?.nameService.interface.format(utils.FormatTypes.full).length);
+    console.log("code:", (await provider?.getCode(contracts?.nameService.address!))?.length)
+    if (!contracts?.nameService  || !account) {
       throw new Error("Name service contract not initialized");
     }
     setLoading(true);
 
     try {
       const tx: string[] = await contracts?.nameService.connect(
-        (await connectWallet()).signer).callStatic.getUserNames(address);
+        (await connectWallet()).signer).callStatic.getUserNames(account);
       console.log(`Found ${tx.length} names for ${address}:`, tx);
       console.log("tx to names:", tx);
       console.log("is object:", typeof tx);
@@ -536,6 +565,7 @@ export const useABWallet = () => {
       console.log("first name:", tx[0]);
 
       setUserName(tx);
+      getNameInfo(tx[0])
 
       fetchNameDetails(tx);
 
@@ -549,7 +579,7 @@ export const useABWallet = () => {
     } finally {
       setLoading(false);
     }
-  }, [contracts?.nameService]);
+  }, [contracts?.nameService, loading, userNames]);
 
   const fetchNameDetails = useCallback(async(names: string[]) => {
     if (!contracts?.nameService || !address || !account) return;
@@ -558,6 +588,8 @@ export const useABWallet = () => {
     for (const name of names) {
       try {
         const info = await contracts?.nameService.getNameInfo(name);
+        console.log("name info:", info[0]);
+        console.log("name info time of exp:", info[1]);
 
         detailsMap.set(name, {
           owner: info[0],
@@ -572,6 +604,13 @@ export const useABWallet = () => {
     }
     setNameDetails(detailsMap);
   }, [contracts?.nameService]);
+
+  useEffect(() => {
+    if (userNames.length > 0 && contracts?.nameService && account) {
+      getUserNames(account!);
+      fetchNameDetails(userNames);
+    }
+  }, []);
 
   const renewName = useCallback(async (
     names: string,
@@ -769,7 +808,8 @@ export const useABWallet = () => {
       setLoading(false);
     }
   }, [contracts?.bondNFT, address]);
-
+/**
+ * 
   // Event Listeners 
   useEffect(() => {
     if (!contracts?.factory || !address) return;
@@ -813,7 +853,7 @@ export const useABWallet = () => {
     return () => {
       contracts.factory.removeAllListeners();
     };
-  }, [contracts?.factory, address, fetchWalletInfo]);
+  }, [contracts?.factory]);
 
   // Name service event listeners
   useEffect(() => {
@@ -844,7 +884,7 @@ export const useABWallet = () => {
     return () => {
       contracts.nameService.removeAllListeners();
     };
-  }, [contracts?.nameService, address]);
+  }, [contracts?.nameService]);
 
   // Bond NFT event listeners
   useEffect(() => {
@@ -889,10 +929,11 @@ export const useABWallet = () => {
   // Auto-fetch wallet info when account changes
   useEffect(() => {
     if (address && contracts?.factory) {
-      fetchWalletInfo(`0x${address}`);
+      fetchWalletInfo(account!);
     }
-  }, [address, contracts?.factory, fetchWalletInfo]);
+  }, [ contracts?.factory]);
 
+ */
   return {
     // 
     account,

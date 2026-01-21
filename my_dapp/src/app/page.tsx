@@ -76,6 +76,13 @@ const MotelSmartWallet = () => {
     4: 0
   });
 
+  const [bondBalancesGrid, setBondBalancesGrid] = useState<Record<number, number>>({
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0
+  });
+
   /**const handleConnect = () => {
     setIsConnected(!isConnected);
   };*/
@@ -107,6 +114,7 @@ const MotelSmartWallet = () => {
   // Get provided and signer from wagmi
   
 //  const signer = _provider.getSigner();
+
   
   const initializeEERC20Integration = useCallback(async () => {
     try {
@@ -152,6 +160,7 @@ const MotelSmartWallet = () => {
   useEffect(() => {
     
     initializeEERC20Integration();
+    initializeUseABWallet();
   }, []);
 
   // Handler for purchasing bonds
@@ -183,6 +192,11 @@ const MotelSmartWallet = () => {
         [bondId]: (prev[bondId] || 0) + (bonds.find(b => b.id === bondId)?.units || 0)
       }));
 
+      setBondBalancesGrid(prev => ({
+        ...prev,
+        [bondId]: (prev[bondId] || 0) + (bonds.find(b => b.id === bondId)?.units || 0)
+      }))
+
       // Update available count
       setBonds(prev => prev.map(bond => bond.id === bondId ?
          { ...bond, available: bond.available - quantity } : bond
@@ -205,7 +219,7 @@ const MotelSmartWallet = () => {
     const loadBondBalances = async (address: string | null) => {
       //const address_ = (await abWallet.connectWallet()).account
       if (!address || !abWallet.contracts?.bondNFT) return;
-      console.log("signer address:", await abWallet.connectWallet().then(res => res.account));
+      console.log("signer address:", (await abWallet.connectWallet()).signer.getAddress());
       console.log("check address when mount:", address);
 
       try {
@@ -222,14 +236,17 @@ const MotelSmartWallet = () => {
           );
           balances[bond.id] = balance.toNumber();
         }
+ 
         setBondBalances(balances);
+        setBondBalancesGrid(balances);
+ 
       } catch (error: any) {
         console.error('Falied to load bond balances:', error);
       }
     }
     loadBondBalances(abWallet.account || null);
     console.log("address:", address);
-  }, [ abWallet.contracts?.bondNFT, bonds]);
+  }, [ abWallet.contracts?.bondNFT]);
    
   const router = useRouter();
 
@@ -274,7 +291,7 @@ const MotelSmartWallet = () => {
   }
 
   const StatCard = ({ title, value, subtitle, icon: Icon, color = "purple"}: StatCardParams) => (
-    <div className={`bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6
+    <div className={`bg-linear-to-br from-gray-900 to-gray-800 rounded-xl p-6
       border border-gray-700 hover:border-${color}-500 transition-all duration-300`}>
         <div>
           <p className="text-gray-400 text-sm mb-1">{title}</p>
@@ -306,7 +323,7 @@ const MotelSmartWallet = () => {
     const savings = bond.value - discountedPrice;
 
     return (
-      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl 
+      <div className="bg-linear-to-br from-gray-900 to-gray-800 rounded-xl 
       p-6 border border-gray-700 hover:border-blue-500 transition-all duration-300">
         <div className="flex justify-between items-start mb-4">
           <div>
@@ -352,7 +369,7 @@ const MotelSmartWallet = () => {
         )}
         <button onClick={() => onPurchase(bond.id)}
           disabled={isPurchasing || bond.available === 0}
-          className="w-full bg-gradient-to-r from-purple-600 
+          className="w-full bg-linear-to-r from-purple-600 
           to-blue-600 text-white py-3 px-4 rounded-lg 
           hover:from-purple-700 hover:to-blue-700 transition-all 
           duration-300 font-medium disabled:opacity-50 disabled:cursor-not-allowed
@@ -407,7 +424,7 @@ const MotelSmartWallet = () => {
 
       {/** Connection Status */}
       {isConnected && (
-        <div className="bg-gradient-to-br from-green-900/20 to-green-800/20 rounded-xl
+        <div className="bg-linear-to-br from-green-900/20 to-green-800/20 rounded-xl
           p-6 border border-green-700/30">
           <div className="flex items-center justify-between">
             <div>
@@ -420,7 +437,7 @@ const MotelSmartWallet = () => {
         </div>
       )}
 
-      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl
+      <div className="bg-linear-to-br from-gray-900 to-gray-800 rounded-xl
       p-6 border border-gray-700">
         <h2 className="text-2xl font-bold text-white mb-4">AB integration</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -475,10 +492,10 @@ const MotelSmartWallet = () => {
                 {Object.values(bondBalances).reduce((a, b) => a + b, 0).toLocaleString()}
               </p>
             </div>
-            <Coins className="text-yellow-400" size={24}/>
+            <Image src="/PNGBond.png" alt="bond logo" width={60} height={40} className="bg-backdrop-blur-sm"/>
           </div>
 
-          <div className="bg-gradient-to-r from-purple-600 to-blue-600
+          <div className="bg-linear-to-r from-purple-600 to-blue-600
            text-white px-4 py-2 rounded-lg">
             <span className="font-bold">15% Discounted Active</span>
            </div>
@@ -492,7 +509,7 @@ const MotelSmartWallet = () => {
           bond={bond}
           onPurchase={handlePurchaseBond}
           isPurchasing={purchasingBondId === bond.id}
-          balance={bondBalances[bond.id] || 0}
+          balance={bondBalancesGrid[bond.id] || 0}
           />
         ))}
       </div>
@@ -672,13 +689,18 @@ const MotelSmartWallet = () => {
               <button onClick={handleDisconnect}
               disabled={!isConnected}>              
               </button>
-              <div className="px-4 py-2 bg-green-600 rounded-lg">
+              {isConnected ? (
+                <div className="px-4 py-2 bg-green-600 rounded-lg">
                 <span className="text-sm font-medium">Connected</span>
                 {chain?.id !== anvil.id && (
                   <span className="text-orange-500 
-                  text-xs font-semibold animate-pulse duration-3000 transition-all">change network:{anvil.id}</span>
+                  text-sm font-semibold animate-pulse duration-300 transition-all">change network:{anvil.id}</span>
                 )}
                </div>
+              ) : <div className="px-4 py-2 bg-gray-900 animate-ping 
+              duration-300 transition-all rounded-lg">
+                <span className="text-sm font-medium">Connect</span>
+                </div>}
             </div>
           </div>
         </div>

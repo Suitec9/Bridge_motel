@@ -37,9 +37,9 @@ import {
 } from 'wagmi/chains';
 import { formatEther } from 'viem/utils';
 import { eERC20ContractInterface, eERC20ZKProofGenerator, EncryptedBalance, initializeContractInterface, initializeProofGenerator } from '@/utils/zkProofInputs';
-import {ethers, utils} from "ethers"
+import {ethers, Signer, utils} from "ethers"
 import { parseEther } from 'ethers/lib/utils';
-import {   CONTRACTS_ERC20, CONTRACTS_REGISTRARY, derivePublicKey, ENCRYPTED_ERC_ABI, provider_,  REGISTRARY_ABI, } from '@/hooks/config/configs'
+import {   CONTRACTS_ERC20, CONTRACTS_REGISTRARY, derivePublicKey, ENCRYPTED_ERC_ABI, generateSecretKetFromSignature, provider_,  REGISTRARY_ABI, } from '@/hooks/config/configs'
 import {  useABWallet } from '@/hooks/useABWallet';
 import { hasZeroCodeLength, localConfig } from '@/hooks/config/bridge_Networkish';
 
@@ -86,7 +86,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
   //  const { checkAddressRegistered, encryptedBalance, handleRegister, initializeEERC} =  useEERC20Integration()
     // eERC20 specific state
     const [isRegisteredForEERC20, setIsRegisteredForEERC20] = useState(false);
-    const [encryptedTokenBalance, setEncryptedTokenBalance] = useState< string>('');
+    const [encryptedTokenBalance, setEncryptedTokenBalance] = useState<string | null>(null);
     const [secretKey, setSecretKey] = useState<string>('');
     const [decryptionKey, setDecryptionKey] = useState<string | null>(null);
     const [proofGenerator, setProofGenerator] = useState<eERC20ZKProofGenerator | null>(null);
@@ -170,29 +170,36 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     }
     
     const initializeEERC20System = async () => {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      const signer =  provider.getSigner();
+
+      try {
+        const provider = new ethers.providers.JsonRpcProvider(localConfig.rpcUrl);
+        const signer =  provider.getSigner();
   
-      const auditoPublicKey: {pubKeyX: string, pubKeyY: string}  = await derivePublicKey(await loadOrGenerateSecretKey('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'));
+        const auditoPublicKey: {pubKeyX: string, pubKeyY: string}  = await derivePublicKey('89141677760775673346137398550263058853546935907853985048405402542049299466');
         
-      const generator = await initializeProofGenerator(provider, [auditoPublicKey.pubKeyX, auditoPublicKey.pubKeyY]);
+        const generator = await initializeProofGenerator(provider, [auditoPublicKey.pubKeyX, auditoPublicKey.pubKeyY]);
        
-      console.log('generator is operational', generator);
+        console.log('generator is operational', generator);
 
-      const contract =  await initializeContractInterface(CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, signer, generator);
-      console.log('contract is initialisng', contract);    
+        const contract =  await initializeContractInterface(CONTRACTS_ERC20, ENCRYPTED_ERC_ABI, signer, generator);
+        console.log('contract is initialisng', contract);    
 
-      if (publicClient && walletClient && address) {
+        if (publicClient && walletClient && address) {
           
-        //Initialize proof generator with audito public
-        setProofGenerator(generator);
+          //Initialize proof generator with auditor public
+          setProofGenerator(generator);
             
-        // Initialize contract interface
-        setContractInterface(contract);
-      }
-     
-      return {publicClient, walletClient, address};
+          // Initialize contract interface
+          setContractInterface(contract);
+        }
 
+        return {publicClient, walletClient, address};
+
+      } catch (err: any) {
+        console.error("failed to initialize the eERC20 system", err);
+        throw new Error("failed to initialize", err.message);
+      }
+      
     };
     
     useEffect(() => {
@@ -201,35 +208,38 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         initializeEERC20System();
         loadUserEERC20State(address);
         initializeABWalletHook();
+
       }
       
-    }, [isConnected, address, proofGenerator, initializeABWalletHook, initializeEERC20System]);
+    }, [ proofGenerator, contractInterface]);
 
     const checkRegistration = async (address: string) => {
-
-      const signer =  provider_.getSigner();
-      
+      const provider = new ethers.providers.JsonRpcProvider(localConfig.rpcUrl);
       console.log("address on mount:", address);
-      if (!address || !publicClient) return false;
+      console.log("account check regsiter check:", (await abWallet.connectWallet()).account);
+      if (!address ) return false;
 
       setResult({ isRegistered: false, loading: true});
 
       try {
-        const contracts_registrary = new ethers.Contract(CONTRACTS_REGISTRARY, REGISTRARY_ABI, signer);
+        const contracts_registrary = new ethers.Contract(
+          CONTRACTS_REGISTRARY, 
+          REGISTRARY_ABI, 
+          provider.getSigner()
+        );
         
         console.log("registrar contract check:", contracts_registrary);
-        const registrationResult =  await contracts_registrary.isUserRegistered(address);  //connect(signer)['isUserRegistered(address)'](address);
-        registrationResult === '0x0000000000000000000000000000000000000000000000000000000000000000' ?  false : 
-        
-        console.log('checking address result:', registrationResult);
+        const registrationResult =  await contracts_registrary.connect( provider.getSigner()).callStatic.isUserRegistered(address); 
         
         setResult({
           isRegistered: registrationResult,
           error:  undefined,
           loading: false
         });
+        console.log("registration result check", result.isRegistered);
 
         setIsRegisteredForEERC20(registrationResult);
+        console.log("result:", registrationResult);
       } catch (error) {
         setResult({
           isRegistered: false,
@@ -247,25 +257,57 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         if (address) {
             checkRegistration(address);
         }
-    }, [address, checkRegistration]);
+    }, []);
+
+
+    const loadUserEERC20State = async (userAddress: string) => {
+      try {
+        // Check registration status on-chain
+        const isRegistered = await checkRegistration(userAddress);
+        setIsRegisteredForEERC20(true);
+
+        // Load or generate secret key
+       if (isRegistered) {
+         const sk = await loadOrGenerateSecretKey(userAddress);
+         setSecretKey(sk);
+       }
+
+        // Load encrypted balance if registered
+        if (isRegistered) {
+          const encryptedBalance = await contractInterface?.getBalance(userAddress, '0x0B306BF915C4d645ff596e518fAf3F9669b97016')//useEncryptedBalance();
+          setEncryptedTokenBalance(encryptedBalance!);
+          console.log("encrypted Balance:", encryptedBalance);
+        }
+         
+      } catch (error: any) {
+        console.error('Failede to load eERC20 state:', error);
+      }
+    }
 
     useEffect(() => {
       if (zkProofStatus === 'completed' && isRegisteredForEERC20 && result.isRegistered) {
         setTimeout(() => setRegistrationCollapsed(true), 2000);
       }
-    }, [zkProofStatus, isRegisteredForEERC20, result.isRegistered]);
+    }, [zkProofStatus]);
 
     const handleRegister = async () => {
       
       const anyChainId = await provider_.getNetwork();
+      console.log("address is string",  (await abWallet?.connectWallet()).account);
 
-      const canRegister = await hasZeroCodeLength(`${address}`, provider_);
-      if (!walletClient || canRegister) return;
+      const canRegister = await hasZeroCodeLength(await provider_.getSigner().getAddress(), provider_);
+      console.log("can register:", canRegister);
+      if (!walletClient || !canRegister || !abWallet.account) return;
 
       const chainId =  anyChainId.chainId;
-
-      const sk = await loadOrGenerateSecretKey(`0x${address}`)
-      setSecretKey(sk);
+      console.log("chainId when registering", chainId);
+      
+      const sk = await loadOrGenerateSecretKey(address!);
+      
+      console.log("generated sk:", sk);
+      const encryptSk = utils.keccak256(utils.keccak256((utils.toUtf8Bytes(sk))));
+      console.log("peek at sk:", encryptSk);
+      setSecretKey(encryptSk);
 
       try {
         setZKProofStatus('generating');
@@ -288,30 +330,6 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       }
     }
 
-    const loadUserEERC20State = async (userAddress: string) => {
-      try {
-        // Check registration status on-chain
-        const isRegistered = await checkRegistration(userAddress);
-        setIsRegisteredForEERC20(true);
-
-        // Load or generate secret key
-       if (isRegistered) {
-         const sk = await loadOrGenerateSecretKey(userAddress);
-         setSecretKey(sk);
-       }
-
-        // Load encrypted balance if registered
-        if (isRegistered) {
-          const encryptedBalance = await contractInterface?.getBalance(userAddress, '0x5FbDB2315678afecb367f032d93F642f64180aa3')//useEncryptedBalance();
-          //setEncryptedTokenBalance(encryptedBalance);
-          console.log("encrypted Balance:", encryptedBalance);
-        }
-         
-      } catch (error: any) {
-        console.error('Failede to load eERC20 state:', error);
-      }
-    }
-
     // ========================================================================================
     // eERC20 OPERATIONS
     // ========================================================================================
@@ -327,7 +345,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         console.log('🔐️ Generating transfer proof...');
 
         const amount = parseEther(transferForm.amount).toString();
-        const currentBalance = parseEther(encryptedTokenBalance).toString();
+        const currentBalance = parseEther(encryptedTokenBalance!).toString();
         const nonce = Date.now().toString();
 
         const tx = await contractInterface.transfer(
@@ -349,7 +367,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
         console.log('✅️ Transfer completed:', receipt);
 
         // Update local balance
-        const newBalance = (BigInt(encryptedTokenBalance) - BigInt(transferForm.amount)).toString();
+        const newBalance = (BigInt(encryptedTokenBalance!) - BigInt(transferForm.amount)).toString();
         setEncryptedTokenBalance(newBalance);
 
         // Reset form
@@ -692,13 +710,15 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     // HELPER FUNCTIONS
     // ========================================================================================
     const loadOrGenerateSecretKey = async (address: string): Promise<string> => {
-      // Store securely (encrypted) or derive deterministically
-      const message = `Generate secret key for eERC20: ${address}`;
-      const hash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(message));
-      const fieldSize = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
-      return (BigInt(hash) % fieldSize).toString();
-    };
 
+      return await generateSecretKetFromSignature(provider_.getSigner(), address)
+
+      // Store securely (encrypted) or derive deterministically
+    //  const message = `Generate secret key for eERC20: ${address}`;
+    //  const hash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(message));
+    //  const fieldSize = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
+    //  return (BigInt(hash) % fieldSize).toString();
+    };
 
     const copyToClipBoard = (text: string | undefined) => {
       setLoading(true);
@@ -854,7 +874,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
     }
 
     const renderRegistrationPanelProminent = () => {
-      if (!isRegisteredForEERC20 && registrationCollapsed && !result.isRegistered) {
+      if (registrationCollapsed && result.isRegistered && isRegisteredForEERC20) {
         return (
           <div className='bg-gradient-to-br from-green-900/20 to-emerald-900/20
           rounded-xl p-4 border border-green-500/30 mb-6'>
@@ -877,7 +897,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
 
       }
 
-      if (isRegisteredForEERC20 && !registrationCollapsed) {
+      if (isRegisteredForEERC20 && result.isRegistered && !registrationCollapsed) {
         return (
           <div className='bg-gradient-to-br from-green-900/20 to-emerald-900/20
           rounded-xl p-6 border border-green-500/30 mb-6'>
@@ -900,7 +920,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
       }
 
       return (
-        <div className='bg-gradient-to-br from-purple-900/30 to-indigo=900/30
+        <div className='bg-linear-to-r from-purple-900/30 to-indigo=900/30
         rounded-xl p-8 border-2 border-500/50 mb-6 shadow-2xl'>
           <div className='flex items-center justify-between mb-6'>
             <div className='flex items-center space-x-4'>
@@ -925,7 +945,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
                 }`}></div>
                 <span className='text-white font-medium'>
                   {zkProofStatus === 'generating' && '⚡ Generating your encryption key...'}
-                  {zkProofStatus === 'submitting' && '📡 Registrayion on-chain...'}
+                  {zkProofStatus === 'submitting' && '📡 Registration on-chain...'}
                   {zkProofStatus === 'completed' && '✅️ Registration completed successfully'}
                   {zkProofStatus === 'failed' && '❌️ Registration failed'}
                 </span>
@@ -937,19 +957,19 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
            <h4 className='text-white font-semibold mb-4'>What you get:</h4>
            <div className='space-y-3'>
             <div className='flex items-center space-x-3'>
-              <CheckCircle2 className='text-green-400 flex-shrink-0' size={20} />
+              <CheckCircle2 className='text-green-400 shrink-0' size={20} />
               <span className='text-gray-300'>Private transfer with hidden amounts</span>
             </div>
             <div className='flex items-center space-x-3'>
-              <CheckCircle2 className='text-green-400 flex-shrink-0' size={20} />
+              <CheckCircle2 className='text-green-400 shrink-0' size={20} />
               <span className='text-gray-300'>Fully encrypted balance visibilty</span>
             </div>
             <div className='flex items-center space-x-3'>
-              <CheckCircle2 className='text-green-400 flex-shrink-0'/>
+              <CheckCircle2 className='text-green-400 shrink-0'/>
               <span className='text-gray-300'>Untraceable transaction history</span>
             </div>
             <div className='flex items-center space-x-3'>
-              <CheckCircle2 className='text-green-400 flex-shrink-0' size={20}/>
+              <CheckCircle2 className='text-green-400 shrink-0' size={20}/>
               <span className='text-gray-300'>Zero-Knowledge proof technology</span>
             </div>
            </div>
@@ -957,7 +977,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
           <button 
            onClick={handleRegister}
            disabled={zkProofStatus !== 'idle'}
-           className='w-full bg-gradient-to-r from-purple-600 to-indigo-600
+           className='w-full bg-linear-to-r from-purple-600 to-indigo-600
            hover:from-purple-700 hover:to-indigo-700 disabled:bg-gray-600
            disabled:cursor-not-allowed text-white py-4 px-6 rounded-lg transition-all
            duration-300 font-bold text-lg flex items-center justify-center shadow-lg'>
@@ -979,7 +999,7 @@ export const EnhancedWallet: React.FC<EnhancedWalletProps> =  ({
      }
 
     const renderEncryptedActions = () => {
-      isRegisteredForEERC20 && result.isRegistered ? (
+       result.isRegistered ? (
         <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 
       border border-gray-700">
         <h3 className="text-xl font-bold text-white mb-4 flex items-center">
